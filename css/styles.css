@@ -642,3 +642,45 @@ body.reduce-motion .panel { backdrop-filter: none; -webkit-backdrop-filter: none
 /* ---- Log (history) header ---- */
 .log-top .quest-title { margin-top: 2px; }
 .log-top-stats { font-size: 13px; color: var(--muted); margin: 2px 0 14px; }
+
+/* =========================================================================
+ * v5 — badge icons, badge detail, Today's Gate
+ * ========================================================================= */
+.badge-svg { display: block; }
+
+/* achievement cards are buttons now */
+.ach-card { font: inherit; color: var(--ink); cursor: pointer; -webkit-appearance: none; appearance: none; display: flex; flex-direction: column; align-items: center; }
+.ach-card:active { transform: scale(.96); }
+.ach-ic { display: flex; justify-content: center; align-items: center; height: 54px; }
+.ach-card.locked { opacity: .62; filter: none; }
+.ach-card.locked .ach-name { color: var(--muted); }
+.ach-ico { display: inline-flex; filter: none; }
+
+/* badge detail modal */
+.ach-detail { text-align: center; padding: 4px 2px 2px; }
+.ad-badge { display: flex; justify-content: center; margin: 4px 0 10px; }
+.ad-badge .badge-svg { filter: drop-shadow(0 6px 20px rgba(139,92,246,.4)); }
+.ad-name { font-family: var(--font-disp); font-size: 22px; font-weight: 800; letter-spacing: .5px; }
+.ad-status { display: inline-block; margin-top: 8px; font-family: var(--font-disp); font-size: 11px; letter-spacing: 2px; color: var(--muted); border: 1px solid var(--line); border-radius: 20px; padding: 5px 12px; }
+.ad-status.got { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 50%, var(--line)); background: rgba(251,191,36,.1); }
+.ad-how { text-align: left; margin: 16px 0 0; background: #0f0d26; border: 1px solid var(--line); border-radius: 10px; padding: 12px; font-size: 14px; line-height: 1.5; }
+.ad-how span { display: block; font-family: var(--font-disp); font-size: 10px; letter-spacing: 2px; color: var(--accent2); margin-bottom: 5px; }
+.ad-prog { margin: 12px 0 0; }
+.ad-prog .ach-prog { height: 8px; margin: 0; }
+.ad-prog-n { font-size: 12px; color: var(--muted); margin-top: 6px; font-family: var(--font-disp); }
+.ad-flavor { margin-top: 16px; font-size: 13px; font-style: italic; color: var(--muted); }
+
+/* ---- Log: Today's Gate ---- */
+.today-card { overflow: hidden; }
+.today-card.tag-push { border-color: color-mix(in srgb, var(--push) 45%, var(--line)); }
+.today-card.tag-pull { border-color: color-mix(in srgb, var(--pull) 45%, var(--line)); }
+.today-card.tag-legs { border-color: color-mix(in srgb, var(--legs) 45%, var(--line)); }
+.today-sentiment { font-size: 13.5px; color: var(--muted); margin: 0 0 14px; padding: 9px 12px; background: #0f0d26; border-radius: 10px; border-left: 2px solid var(--accent); }
+.today-sentiment b { color: #dbe6ff; }
+.sent-live { color: var(--warn); font-weight: 600; }
+
+.log-stats-row { display: flex; }
+.lsr { flex: 1; text-align: center; }
+.lsr + .lsr { border-left: 1px solid var(--line); }
+.lsr b { display: block; font-family: var(--font-disp); font-size: 20px; color: #dbeafe; }
+.lsr span { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); }

@@ -11,13 +11,14 @@ import * as K from "./knowledge.js";
 import * as fx from "./fx.js";
 import * as coach from "./coach.js";
 import * as ach from "./achievements.js";
+import { badgeSVG } from "./icons.js";
 
 /* ------------------------------- state ----------------------------------- */
 const state = {
   view: "home",
   program: null,
   sessions: [],
-  settings: { unit: "kg", restSeconds: 120, lastStatsExercise: null, reduceMotion: false, sound: true, hunterName: "", barWeight: 20, onboarded: false, achievementsSeen: [] },
+  settings: { unit: "kg", restSeconds: 120, lastStatsExercise: null, reduceMotion: false, sound: true, hunterName: "", barWeight: 20, onboarded: false, achievementsSeen: [], achievementsAt: {} },
   current: null, // session being logged
   stats: null,
   openLearn: new Set(), // exIds with the "Learn" panel expanded
@@ -169,6 +170,7 @@ async function init() {
   // Existing users (already have logs) skip onboarding, and their already-earned
   // titles are marked seen so we don't retroactively celebrate them.
   if (!Array.isArray(state.settings.achievementsSeen)) state.settings.achievementsSeen = [];
+  if (!state.settings.achievementsAt || typeof state.settings.achievementsAt !== "object") state.settings.achievementsAt = {};
   if (!state.settings.onboarded && state.sessions.length > 0) state.settings.onboarded = true;
   if (state.settings.achievementsSeen.length === 0 && state.sessions.length > 0) {
     state.settings.achievementsSeen = ach.unlockedIds(state.sessions, state.stats);
@@ -277,7 +279,7 @@ function renderHome() {
 
   <section class="panel ach-strip" data-action="go-stats">
     <div class="ach-strip-h"><span>⬡ TITLES</span><b>${got.length}/${achAll.length}</b></div>
-    <div class="ach-icons">${got.length ? got.slice(-8).reverse().map((a) => `<span class="ach-ico">${a.icon}</span>`).join("") : '<span class="ach-none">Clear gates to earn titles →</span>'}</div>
+    <div class="ach-icons">${got.length ? got.slice(-8).reverse().map((a) => `<span class="ach-ico">${badgeSVG(a.glyph, { tier: a.tier, unlocked: true, size: 34 })}</span>`).join("") : '<span class="ach-none">Clear gates to earn titles →</span>'}</div>
   </section>
 
   <section class="panel neuro-card">
@@ -305,23 +307,49 @@ function sessionRow(s) {
 
 /* ------------------------------ LOG (history) ---------------------------- */
 function renderLog() {
+  const todayStr = store.todayISO();
   const inProgress = state.sessions.find((s) => !s.completedAt && (s.entries || []).some((e) => (e.sets || []).some((x) => x.done || Number(x.reps) > 0)));
   const done = completedSessions().slice().reverse(); // newest first
-  const dayId = suggestedDayId();
-  const day = getDay(state.program, dayId);
+  const todayDone = done.find((s) => s.date === todayStr);
+  const dayId = inProgress ? inProgress.dayId : suggestedDayId();
+  const day = getDay(state.program, dayId) || state.program.days[0];
+  const tagCls = "tag-" + (day.tag || "push").toLowerCase();
+  const sets = day.exercises.reduce((a, e) => a + (e.sets || 0), 0);
 
-  // group sessions by "Month YYYY"
+  let sentiment;
+  if (inProgress) sentiment = `<span class="sent-live">● In progress — tap resume</span>`;
+  else if (todayDone) sentiment = `Sentiment: <b>${todayDone.mood ? moodEmoji(todayDone.mood) + " " + esc(todayDone.mood) : "logged ✓"}</b>`;
+  else sentiment = `Not trained yet today`;
+
+  const cta = inProgress
+    ? `<button class="btn btn-primary btn-lg block" data-action="resume" data-id="${inProgress.id}">▸ Resume workout</button>`
+    : todayDone
+      ? `<button class="btn btn-ghost block" data-action="start" data-day="${day.id}">Train again</button>`
+      : `<button class="btn btn-primary btn-lg block" data-action="start" data-day="${day.id}">⟡ Enter the Gate</button>`;
+
   const groups = {};
   for (const s of done) { const k = monthLabel(s.date); (groups[k] = groups[k] || []).push(s); }
 
+  let niceDate = todayStr;
+  try { niceDate = new Date(todayStr + "T00:00:00").toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "short" }); } catch { /* keep iso */ }
+
   return `
-  <section class="panel log-top system-frame">
-    <div class="quest-eyebrow">TRAINING LOG</div>
-    <h2 class="quest-title">Your Gates</h2>
-    <div class="log-top-stats">${done.length} logged · ${fmt(state.stats.totalVolume)} total volume · streak ${state.stats.streak}</div>
-    ${inProgress
-      ? `<button class="btn btn-primary btn-lg block" data-action="resume" data-id="${inProgress.id}">▸ Resume ${esc(inProgress.dayName)}</button>`
-      : `<button class="btn btn-primary btn-lg block" data-action="start" data-day="${day.id}">⟡ Start ${esc(day.name)}</button>`}
+  <section class="panel today-card system-frame ${tagCls}">
+    <div class="quest-head">
+      <span class="quest-eyebrow">${todayDone && !inProgress ? "✓ TODAY" : "⚔ TODAY'S GATE"} · ${esc(niceDate)}</span>
+      <span class="quest-tag ${tagCls}">${esc(day.tag)}</span>
+    </div>
+    <h2 class="quest-title">${esc(day.name)}</h2>
+    <p class="quest-focus">${esc(day.focus || "")}</p>
+    <div class="quest-meta">${day.exercises.length} exercises · ${sets} working sets</div>
+    <div class="today-sentiment">${sentiment}</div>
+    ${cta}
+  </section>
+
+  <section class="panel log-stats-row">
+    <div class="lsr"><b>${done.length}</b><span>Gates</span></div>
+    <div class="lsr"><b>${fmt(state.stats.totalVolume)}</b><span>Volume</span></div>
+    <div class="lsr"><b>${state.stats.streak}</b><span>Streak</span></div>
   </section>
 
   ${done.length
@@ -330,7 +358,7 @@ function renderLog() {
         <div class="panel-h"><h3>${esc(k)}</h3><span class="muted-sm">${groups[k].length}</span></div>
         <ul class="session-list">${groups[k].map(sessionRow).join("")}</ul>
       </section>`).join("")
-    : `<section class="panel empty-hero"><h2>No workouts logged yet</h2><p>Tap Start above to log your first gate. Every set you record is saved here forever (on this device).</p></section>`}`;
+    : `<section class="panel empty-hero"><h2>No workouts logged yet</h2><p>Tap Enter the Gate above to log your first workout. Every set is saved here (on this device).</p></section>`}`;
 }
 
 function monthLabel(iso) {
@@ -522,13 +550,34 @@ function renderStats() {
 
 function achCard(a) {
   const prog = !a.unlocked && a.progress;
-  return `<div class="ach-card ${a.unlocked ? "got" : "locked"}" title="${esc(a.desc)}">
-    <div class="ach-ic">${a.icon}</div>
+  return `<button class="ach-card ${a.unlocked ? "got" : "locked"}" data-action="ach-detail" data-id="${a.id}">
+    <div class="ach-ic">${badgeSVG(a.glyph, { tier: a.tier, unlocked: a.unlocked, size: 54 })}</div>
     <div class="ach-name">${esc(a.name)}</div>
-    ${a.unlocked ? `<div class="ach-desc">${esc(a.desc)}</div>`
+    ${a.unlocked ? `<div class="ach-desc">Unlocked</div>`
       : prog ? `<div class="ach-prog"><i style="width:${a.progress.pct}%"></i></div><div class="ach-desc">${fmt(a.progress.cur)}/${fmt(a.progress.goal)}</div>`
-      : `<div class="ach-desc">${esc(a.desc)}</div>`}
-  </div>`;
+      : `<div class="ach-desc">Locked</div>`}
+  </button>`;
+}
+
+function openAchievement(id) {
+  const a = ach.evaluate(state.sessions, state.stats).find((x) => x.id === id);
+  if (!a) return;
+  const at = (state.settings.achievementsAt || {})[id];
+  const status = a.unlocked
+    ? `<span class="ad-status got">⬡ UNLOCKED${at ? " · " + esc(at) : ""}</span>`
+    : `<span class="ad-status">LOCKED</span>`;
+  const prog = a.progress
+    ? `<div class="ad-prog"><div class="ach-prog"><i style="width:${a.progress.pct}%"></i></div><div class="ad-prog-n">${fmt(a.progress.cur)} / ${fmt(a.progress.goal)} · ${a.progress.pct}%</div></div>`
+    : "";
+  modal(`<div class="modal-h"><h3>Title</h3><button class="x" data-action="close-modal">✕</button></div>
+    <div class="ach-detail">
+      <div class="ad-badge">${badgeSVG(a.glyph, { tier: a.tier, unlocked: a.unlocked, size: 116 })}</div>
+      <div class="ad-name">${esc(a.name)}</div>
+      ${status}
+      <div class="ad-how"><span>HOW TO EARN</span>${esc(a.desc)}</div>
+      ${prog}
+      <div class="ad-flavor">${a.unlocked ? "The System recognizes your deed, Hunter." : "Keep training — this title awaits."}</div>
+    </div>`);
 }
 
 function drawStatsCharts(selName) {
@@ -660,6 +709,7 @@ function bindView() {
     const actions = {
       "go-home": () => navigate("home"),
       "go-stats": () => navigate("stats"),
+      "ach-detail": () => openAchievement(b.dataset.id),
       start: () => startSession(b.dataset.day),
       resume: () => resumeSession(b.dataset.id),
       "open-session": () => openSession(b.dataset.id),
@@ -900,6 +950,8 @@ async function finishSession() {
   const nowIds = ach.unlockedIds(others.concat(cur), after);
   const seenAch = new Set(state.settings.achievementsSeen || []);
   const newAch = ach.ACHIEVEMENTS.filter((a) => nowIds.includes(a.id) && !seenAch.has(a.id));
+  if (!state.settings.achievementsAt) state.settings.achievementsAt = {};
+  for (const a of newAch) state.settings.achievementsAt[a.id] = cur.date;
   state.settings.achievementsSeen = nowIds;
   await saveSettings();
 
@@ -924,7 +976,7 @@ function showQuestComplete({ xpGain, prs, leveled, level, rank, before, session,
   const muscles = Object.keys(byMuscle).sort((a, b) => byMuscle[b] - byMuscle[a]).slice(0, 6);
   const vol = store.sessionVolume(session);
   const neuro = K.pickNeuro();
-  const achHtml = (newAch && newAch.length) ? `<div class="qc-ach"><div class="qc-section">⬡ TITLE${newAch.length > 1 ? "S" : ""} UNLOCKED</div>${newAch.map((a) => `<div class="qc-achrow"><span class="qc-achic">${a.icon}</span><div class="qc-achtxt"><b>${esc(a.name)}</b><small>${esc(a.desc)}</small></div></div>`).join("")}</div>` : "";
+  const achHtml = (newAch && newAch.length) ? `<div class="qc-ach"><div class="qc-section">⬡ TITLE${newAch.length > 1 ? "S" : ""} UNLOCKED</div>${newAch.map((a) => `<div class="qc-achrow"><span class="qc-achic">${badgeSVG(a.glyph, { tier: a.tier, unlocked: true, size: 46 })}</span><div class="qc-achtxt"><b>${esc(a.name)}</b><small>${esc(a.desc)}</small></div></div>`).join("")}</div>` : "";
 
   const prHtml = prs.length
     ? `<div class="qc-prs"><div class="qc-section">⬡ NEW RECORDS</div>${prs.map((p, i) => `<div class="qc-pr" style="animation-delay:${i * 90}ms"><span>${esc(p.name)}</span><b>${fmt(p.e1rm)} ${esc(state.settings.unit)}</b></div>`).join("")}</div>`

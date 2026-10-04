@@ -1,6 +1,7 @@
 /* =========================================================================
  * achievements.js — "Titles" the Hunter unlocks. Pure evaluation from the
  * stats + session history. No storage here; app.js remembers which were seen.
+ * Each title carries a `glyph` + `tier` used by icons.js badgeSVG().
  * ========================================================================= */
 
 import { dateToNum, todayISO } from "./store.js";
@@ -22,41 +23,40 @@ function sessionsInLastDays(completed, n) {
   return completed.filter((s) => today - dateToNum(s.date) <= n).length;
 }
 
-/* id, name, desc, icon, test(ctx) -> bool, goal (for progress on count types) */
+/* id, name, desc, glyph, tier, test(ctx) -> bool, metric+goal (for progress) */
 export const ACHIEVEMENTS = [
-  { id: "first_gate", name: "First Gate", desc: "Complete your first workout.", icon: "⚔", test: (c) => c.count >= 1, metric: "count", goal: 1 },
-  { id: "gates_10", name: "Gate Hunter", desc: "Clear 10 gates.", icon: "🗡", test: (c) => c.count >= 10, metric: "count", goal: 10 },
-  { id: "gates_25", name: "Dungeon Regular", desc: "Clear 25 gates.", icon: "🏯", test: (c) => c.count >= 25, metric: "count", goal: 25 },
-  { id: "gates_50", name: "Gate Breaker", desc: "Clear 50 gates.", icon: "💥", test: (c) => c.count >= 50, metric: "count", goal: 50 },
-  { id: "gates_100", name: "Monarch's Path", desc: "Clear 100 gates.", icon: "👑", test: (c) => c.count >= 100, metric: "count", goal: 100 },
+  { id: "first_gate", name: "First Gate", desc: "Complete your first workout.", glyph: "portal", tier: "t1", test: (c) => c.count >= 1, metric: "count", goal: 1 },
+  { id: "gates_10", name: "Gate Hunter", desc: "Clear 10 gates.", glyph: "sword", tier: "t2", test: (c) => c.count >= 10, metric: "count", goal: 10 },
+  { id: "gates_25", name: "Dungeon Regular", desc: "Clear 25 gates.", glyph: "tower", tier: "t2", test: (c) => c.count >= 25, metric: "count", goal: 25 },
+  { id: "gates_50", name: "Gate Breaker", desc: "Clear 50 gates.", glyph: "burst", tier: "t3", test: (c) => c.count >= 50, metric: "count", goal: 50 },
+  { id: "gates_100", name: "Monarch's Path", desc: "Clear 100 gates.", glyph: "crown", tier: "t5", test: (c) => c.count >= 100, metric: "count", goal: 100 },
 
-  { id: "streak_3", name: "Momentum", desc: "3 sessions in a row (≤3 days apart).", icon: "🔥", test: (c) => c.maxStreak >= 3, metric: "streak", goal: 3 },
-  { id: "streak_7", name: "Unbroken", desc: "A 7-session streak.", icon: "⚡", test: (c) => c.maxStreak >= 7, metric: "streak", goal: 7 },
-  { id: "streak_14", name: "Relentless", desc: "A 14-session streak.", icon: "🌋", test: (c) => c.maxStreak >= 14, metric: "streak", goal: 14 },
+  { id: "streak_3", name: "Momentum", desc: "3 sessions in a row (≤3 days apart).", glyph: "flame", tier: "t1", test: (c) => c.maxStreak >= 3, metric: "streak", goal: 3 },
+  { id: "streak_7", name: "Unbroken", desc: "A 7-session streak.", glyph: "bolt", tier: "t3", test: (c) => c.maxStreak >= 7, metric: "streak", goal: 7 },
+  { id: "streak_14", name: "Relentless", desc: "A 14-session streak.", glyph: "flame", tier: "t4", test: (c) => c.maxStreak >= 14, metric: "streak", goal: 14 },
 
-  { id: "vol_100k", name: "Heavy Lifter", desc: "Move 100,000 total volume.", icon: "🏋", test: (c) => c.volume >= 1e5, metric: "volume", goal: 1e5 },
-  { id: "vol_500k", name: "Mountain Mover", desc: "Move 500,000 total volume.", icon: "⛰", test: (c) => c.volume >= 5e5, metric: "volume", goal: 5e5 },
-  { id: "vol_1m", name: "Million Club", desc: "Move 1,000,000 total volume.", icon: "💎", test: (c) => c.volume >= 1e6, metric: "volume", goal: 1e6 },
+  { id: "vol_100k", name: "Heavy Lifter", desc: "Move 100,000 total volume.", glyph: "dumbbell", tier: "t2", test: (c) => c.volume >= 1e5, metric: "volume", goal: 1e5 },
+  { id: "vol_500k", name: "Mountain Mover", desc: "Move 500,000 total volume.", glyph: "mountain", tier: "t3", test: (c) => c.volume >= 5e5, metric: "volume", goal: 5e5 },
+  { id: "vol_1m", name: "Million Club", desc: "Move 1,000,000 total volume.", glyph: "gem", tier: "t5", test: (c) => c.volume >= 1e6, metric: "volume", goal: 1e6 },
 
-  { id: "pr_10", name: "Record Setter", desc: "Set 10 personal records.", icon: "⬡", test: (c) => c.records >= 10, metric: "records", goal: 10 },
-  { id: "pr_25", name: "Limit Breaker", desc: "Set 25 personal records.", icon: "✶", test: (c) => c.records >= 25, metric: "records", goal: 25 },
+  { id: "pr_10", name: "Record Setter", desc: "Set 10 personal records.", glyph: "medal", tier: "t2", test: (c) => c.records >= 10, metric: "records", goal: 10 },
+  { id: "pr_25", name: "Limit Breaker", desc: "Set 25 personal records.", glyph: "trophy", tier: "t4", test: (c) => c.records >= 25, metric: "records", goal: 25 },
 
-  { id: "rank_c", name: "C-Rank Hunter", desc: "Reach Level 10.", icon: "🔷", test: (c) => c.level >= 10, metric: "level", goal: 10 },
-  { id: "rank_a", name: "A-Rank Hunter", desc: "Reach Level 35.", icon: "🟣", test: (c) => c.level >= 35, metric: "level", goal: 35 },
-  { id: "rank_s", name: "S-Rank Hunter", desc: "Reach Level 55.", icon: "⭐", test: (c) => c.level >= 55, metric: "level", goal: 55 },
+  { id: "rank_c", name: "C-Rank Hunter", desc: "Reach Level 10.", glyph: "shield", tier: "t2", test: (c) => c.level >= 10, metric: "level", goal: 10 },
+  { id: "rank_a", name: "A-Rank Hunter", desc: "Reach Level 35.", glyph: "shield", tier: "t3", test: (c) => c.level >= 35, metric: "level", goal: 35 },
+  { id: "rank_s", name: "S-Rank Hunter", desc: "Reach Level 55.", glyph: "star", tier: "t5", test: (c) => c.level >= 55, metric: "level", goal: 55 },
 
-  { id: "full_rotation", name: "Full Rotation", desc: "Train all 6 PPL days at least once.", icon: "🔄", test: (c) => c.dayTypes >= 6 },
-  { id: "locked_in", name: "Locked In", desc: "12 workouts in 30 days.", icon: "📅", test: (c) => c.last30 >= 12 },
+  { id: "full_rotation", name: "Full Rotation", desc: "Train all 6 PPL days at least once.", glyph: "orbit", tier: "t3", test: (c) => c.dayTypes >= 6 },
+  { id: "locked_in", name: "Locked In", desc: "12 workouts in 30 days.", glyph: "calendar", tier: "t2", test: (c) => c.last30 >= 12 },
 
-  { id: "bw_bench", name: "Bodyweight Bench", desc: "Bench press ≥ your bodyweight.", icon: "🫸", test: (c) => c.bw > 0 && (c.best["Barbell Bench Press"] || 0) >= c.bw },
-  { id: "bw_squat", name: "1.5× Squat", desc: "Squat ≥ 1.5× bodyweight.", icon: "🦵", test: (c) => c.bw > 0 && (c.best["Back Squat"] || 0) >= 1.5 * c.bw },
-  { id: "bw_dead", name: "2× Deadlift", desc: "Deadlift ≥ 2× bodyweight.", icon: "🔗", test: (c) => c.bw > 0 && (c.best["Deadlift"] || 0) >= 2 * c.bw }
+  { id: "bw_bench", name: "Bodyweight Bench", desc: "Bench press ≥ your bodyweight.", glyph: "dumbbell", tier: "t3", test: (c) => c.bw > 0 && (c.best["Barbell Bench Press"] || 0) >= c.bw },
+  { id: "bw_squat", name: "1.5× Squat", desc: "Squat ≥ 1.5× bodyweight.", glyph: "squat", tier: "t3", test: (c) => c.bw > 0 && (c.best["Back Squat"] || 0) >= 1.5 * c.bw },
+  { id: "bw_dead", name: "2× Deadlift", desc: "Deadlift ≥ 2× bodyweight.", glyph: "link", tier: "t4", test: (c) => c.bw > 0 && (c.best["Deadlift"] || 0) >= 2 * c.bw }
 ];
 
 function buildCtx(sessions, stats) {
   const completed = sessions.filter((s) => s.completedAt);
   const dayTypes = new Set(completed.map((s) => s.dayId)).size;
-  // latest known bodyweight
   let bw = 0;
   for (let i = completed.length - 1; i >= 0; i--) {
     const v = Number(completed[i].bodyweight);
@@ -94,3 +94,5 @@ export function evaluate(sessions, stats) {
 export function unlockedIds(sessions, stats) {
   return evaluate(sessions, stats).filter((a) => a.unlocked).map((a) => a.id);
 }
+
+export function byId(id) { return ACHIEVEMENTS.find((a) => a.id === id) || null; }

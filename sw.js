@@ -1,6 +1,6 @@
 /* Service worker — offline app shell.
  * Bump CACHE whenever you change app files so phones pick up the update. */
-const CACHE = "sls-gym-v4";
+const CACHE = "sls-gym-v5";
 const RUNTIME = "sls-gym-runtime";
 
 const CORE = [
@@ -16,6 +16,7 @@ const CORE = [
   "./js/fx.js",
   "./js/coach.js",
   "./js/achievements.js",
+  "./js/icons.js",
   "./vendor/xlsx.full.min.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
@@ -37,29 +38,39 @@ self.addEventListener("activate", (e) => {
   );
 });
 
+function networkFirst(req) {
+  return fetch(req).then((res) => {
+    const copy = res.clone();
+    caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+    return res;
+  }).catch(() => caches.match(req));
+}
+
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
 
-  // App navigations -> serve the shell (works offline / standalone)
+  // Navigations -> network-first, fall back to cached shell (offline)
   if (req.mode === "navigate") {
-    e.respondWith(caches.match("./index.html").then((r) => r || fetch(req).catch(() => caches.match("./"))));
+    e.respondWith(
+      fetch(req).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put("./index.html", copy)).catch(() => {});
+        return res;
+      }).catch(() => caches.match("./index.html").then((r) => r || caches.match("./")))
+    );
     return;
   }
 
-  // Same-origin: cache-first, then network (and cache it)
   if (url.origin === self.location.origin) {
-    e.respondWith(
-      caches.match(req).then((r) =>
-        r ||
-        fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
-          return res;
-        }).catch(() => r)
-      )
-    );
+    // Big immutable vendor files -> cache-first (never re-download)
+    if (url.pathname.includes("/vendor/")) {
+      e.respondWith(caches.match(req).then((r) => r || networkFirst(req)));
+      return;
+    }
+    // App code/assets -> network-first so updates land immediately; cache is the offline fallback
+    e.respondWith(networkFirst(req));
     return;
   }
 
