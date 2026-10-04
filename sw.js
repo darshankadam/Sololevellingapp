@@ -1,6 +1,6 @@
 /* Service worker — offline app shell.
  * Bump CACHE whenever you change app files so phones pick up the update. */
-const CACHE = "sls-gym-v1";
+const CACHE = "sls-gym-v2";
 const RUNTIME = "sls-gym-runtime";
 
 const CORE = [
@@ -12,6 +12,8 @@ const CORE = [
   "./js/store.js",
   "./js/charts.js",
   "./js/exporter.js",
+  "./js/knowledge.js",
+  "./js/fx.js",
   "./vendor/xlsx.full.min.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",

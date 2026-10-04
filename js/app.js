@@ -7,19 +7,31 @@ import { getDay } from "./program.js";
 import * as store from "./store.js";
 import { lineChart, barChart } from "./charts.js";
 import { exportXLSX, exportCSV, exportJSON, readJSONFile } from "./exporter.js";
+import * as K from "./knowledge.js";
+import * as fx from "./fx.js";
 
 /* ------------------------------- state ----------------------------------- */
 const state = {
   view: "home",
   program: null,
   sessions: [],
-  settings: { unit: "kg", restSeconds: 120, lastStatsExercise: null },
+  settings: { unit: "kg", restSeconds: 120, lastStatsExercise: null, reduceMotion: false },
   current: null, // session being logged
-  stats: null
+  stats: null,
+  openLearn: new Set() // exIds with the "Learn" panel expanded
 };
 
 let saveTimer = null;
 let restTimer = null;
+let restTipTimer = null;
+
+/* Accent colours per workout type (used for particle bursts). */
+function tagColors(tag) {
+  const t = (tag || "").toLowerCase();
+  if (t === "pull") return ["#8b5cf6", "#a855f7", "#e879f9", "#c4b5fd"];
+  if (t === "legs") return ["#2dd4bf", "#34d399", "#5eead4", "#fbbf24"];
+  return ["#38bdf8", "#22d3ee", "#7dd3fc", "#a855f7"];
+}
 
 /* ------------------------------ tiny helpers ----------------------------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -127,10 +139,12 @@ async function refreshSessions() { state.sessions = await store.getAllSessions()
 async function init() {
   state.program = await store.getProgram();
   state.settings = Object.assign(state.settings, (await store.getSetting("settings", {})) || {});
+  document.body.classList.toggle("reduce-motion", !!state.settings.reduceMotion);
   await refreshSessions();
   store.requestPersistence();
   registerSW();
   bindShell();
+  state.animateNext = true;
   render();
 }
 
@@ -148,6 +162,7 @@ function bindShell() {
 function navigate(view) {
   // leaving an in-progress log keeps it saved; just switch
   state.view = view;
+  state.animateNext = true;
   render();
   window.scrollTo(0, 0);
 }
@@ -175,7 +190,7 @@ function hunterPanel() {
         <div class="hunter-label">HUNTER · ${esc(s.rank.title)}</div>
         <div class="hunter-level">LEVEL <b>${s.level}</b></div>
         <div class="xp-row">
-          <div class="xp-bar"><i style="width:${pct}%"></i></div>
+          <div class="xp-bar"><i style="width:${pct}%" data-pct="${pct}"></i></div>
           <div class="xp-text">${fmt(s.xpIntoLevel)} / ${fmt(s.xpLevelSpan)} XP</div>
         </div>
       </div>
@@ -196,6 +211,7 @@ function renderHome() {
   const day = getDay(state.program, dayId);
   const tagCls = "tag-" + (day.tag || "push").toLowerCase();
   const recent = completedSessions().slice(-5).reverse();
+  const neuro = K.neuroOfDay(store.todayISO());
 
   return `
   ${hunterPanel()}
@@ -218,6 +234,11 @@ function renderHome() {
       <button class="btn btn-primary btn-lg" data-action="start" data-day="${day.id}">⟡ Enter the Gate</button>
       <button class="btn btn-ghost" data-action="pick-day">Change</button>
     </div>
+  </section>
+
+  <section class="panel neuro-card">
+    <div class="neuro-k">◆ NEURO INSIGHT · ${esc(neuro.tag)}</div>
+    <div class="neuro-t">${esc(neuro.text)}</div>
   </section>
 
   <section class="panel">
@@ -277,6 +298,8 @@ function renderLog() {
 function exerciseCard(entry, ei) {
   const last = lastPerformance(entry.name);
   const step = state.settings.unit === "lb" ? 5 : 2.5;
+  const info = K.getInfo(entry.name, entry.muscle);
+  const open = state.openLearn.has(entry.exId);
   return `
   <section class="panel ex-card">
     <div class="ex-head">
@@ -284,9 +307,19 @@ function exerciseCard(entry, ei) {
         <b>${esc(entry.name)}</b>
         <small>${esc(entry.muscle)} · target ${entry.targetSets}×${esc(entry.targetReps)}</small>
       </div>
-      <button class="btn btn-ghost btn-sm" data-action="swap" data-ex="${ei}">⇄ Swap</button>
+      <div class="ex-actions">
+        <button class="icon-btn ${open ? "on" : ""}" data-action="learn" data-ex="${ei}" aria-label="Learn about this exercise">${open ? "▲" : "ⓘ"}</button>
+        <button class="btn btn-ghost btn-sm" data-action="swap" data-ex="${ei}">⇄</button>
+      </div>
     </div>
     ${entry.note ? `<div class="ex-note">${esc(entry.note)}</div>` : ""}
+    <div class="ex-learn ${open ? "open" : ""}">
+      <div class="learn-row"><span class="learn-k">WORKS</span><span>${esc(info.primary)}${info.secondary && info.secondary !== "—" ? ' · <em>' + esc(info.secondary) + "</em>" : ""}</span></div>
+      <div class="learn-row"><span class="learn-k">CUES</span><ul class="learn-cues">${info.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>
+      <div class="learn-row"><span class="learn-k">AVOID</span><span>${esc(info.mistake)}</span></div>
+      <div class="learn-row"><span class="learn-k">FOCUS</span><span class="learn-focus">${esc(info.focus)}</span></div>
+      <div class="learn-why">${esc(info.why)}</div>
+    </div>
     <div class="ex-last">${last ? `Last: <b>${esc(last.weight)}${esc(state.settings.unit)} × ${esc(last.reps)}</b> · best e1RM ${fmt(store.e1rm(last.weight, last.reps))}` : "No history yet — set the baseline."}</div>
     <div class="set-table">
       <div class="set-row set-row-head"><span>SET</span><span>WEIGHT (${esc(state.settings.unit)})</span><span>REPS</span><span>✓</span></div>
@@ -416,6 +449,13 @@ function renderData() {
     </div>
     <label class="field"><span>Rest timer (seconds)</span>
       <input type="text" inputmode="numeric" id="restSecs" value="${esc(state.settings.restSeconds)}" data-role="rest-secs"></label>
+    <div class="row-between">
+      <span>Animations &amp; effects</span>
+      <div class="seg">
+        <button class="seg-btn ${!state.settings.reduceMotion ? "on" : ""}" data-action="toggle-fx" data-v="off">Full</button>
+        <button class="seg-btn ${state.settings.reduceMotion ? "on" : ""}" data-action="toggle-fx" data-v="on">Reduced</button>
+      </div>
+    </div>
   </section>
 
   <section class="panel">
@@ -437,7 +477,7 @@ function renderData() {
     <button class="btn btn-danger block" data-action="wipe">Erase all workout data</button>
   </section>
 
-  <div class="credit">THE SYSTEM · v1 · all data stored locally on-device</div>`;
+  <div class="credit">THE SYSTEM · v2 · all data stored locally on-device</div>`;
 }
 
 function progExerciseEditor(di, xi, ex) {
@@ -471,7 +511,8 @@ function bindView() {
       "open-session": () => openSession(b.dataset.id),
       "pick-day": pickDay,
       step: () => stepField(+b.dataset.ex, +b.dataset.set, b.dataset.field, +b.dataset.delta),
-      "toggle-done": () => toggleDone(+b.dataset.ex, +b.dataset.set),
+      "toggle-done": () => toggleDone(+b.dataset.ex, +b.dataset.set, b),
+      learn: () => toggleLearn(+b.dataset.ex),
       "add-set": () => addSet(+b.dataset.ex),
       "del-set": () => delSet(+b.dataset.ex),
       swap: () => swapExercise(+b.dataset.ex),
@@ -484,6 +525,7 @@ function bindView() {
       "reset-program": resetProgram,
       "add-ex": () => addProgExercise(+b.dataset.day),
       "del-ex": () => delProgExercise(+b.dataset.day, +b.dataset.ex),
+      "toggle-fx": () => setReduceMotion(b.dataset.v === "on"),
       wipe: wipeData
     };
     if (actions[a]) { e.preventDefault(); actions[a](); }
@@ -514,6 +556,21 @@ function bindView() {
     if (f) f.onchange = () => importBackup(f.files[0]);
     showStorageInfo();
   }
+
+  if (state.animateNext) { animateIn(); state.animateNext = false; }
+}
+
+/* Entrance polish — only on view changes, not on in-place re-renders. */
+function animateIn() {
+  if (fx.reducedMotion()) return;
+  $$("#view .xp-bar i[data-pct]").forEach((el) => {
+    const p = el.dataset.pct; el.style.width = "0%";
+    requestAnimationFrame(() => requestAnimationFrame(() => { el.style.width = p + "%"; }));
+  });
+  $$("#view > .panel, #view .ex-card").forEach((el, i) => {
+    el.style.animationDelay = Math.min(i, 9) * 45 + "ms";
+    el.classList.add("rise-in");
+  });
 }
 
 /* ============================ LOG ACTIONS ============================== */
@@ -547,13 +604,28 @@ function stepField(ei, si, field, delta) {
   persistCurrent();
 }
 
-function toggleDone(ei, si) {
+function toggleDone(ei, si, btnEl) {
   const set = state.current.entries[ei].sets[si];
-  set.done = !set.done;
+  const turningOn = !set.done;
+  set.done = turningOn;
+  let cx = null, cy = null;
+  if (turningOn && btnEl) { const r = btnEl.getBoundingClientRect(); cx = r.left + r.width / 2; cy = r.top + r.height / 2; }
   persistCurrent(true);
-  // light re-render of the row state + header progress
   render();
-  if (set.done) startRest();
+  if (turningOn) {
+    const entry = state.current.entries[ei];
+    if (cx != null) fx.burst(cx, cy, { count: 18, power: 6, colors: tagColors(state.current.tag) });
+    fx.haptic(25);
+    startRest(entry ? entry.name : "");
+  }
+}
+
+function toggleLearn(ei) {
+  const entry = state.current.entries[ei];
+  if (!entry) return;
+  if (state.openLearn.has(entry.exId)) state.openLearn.delete(entry.exId);
+  else state.openLearn.add(entry.exId);
+  render();
 }
 
 function addSet(ei) {
@@ -597,30 +669,48 @@ function applySwap(ei, name) {
   closeModal(); persistCurrent(true); render();
 }
 
-function startRest() {
+function startRest(exName) {
   const secs = Math.max(5, +state.settings.restSeconds || 120);
   let remaining = secs;
-  clearInterval(restTimer);
+  clearInterval(restTimer); clearInterval(restTipTimer);
   let bar = $("#restbar");
   if (!bar) { bar = document.createElement("div"); bar.id = "restbar"; document.body.appendChild(bar); }
-  const paint = () => {
-    bar.className = "show";
-    bar.innerHTML = `<button data-r="-15">−15</button><div class="rest-mid"><b>${remaining}s</b><span>REST</span></div><button data-r="skip">skip</button>`;
-  };
-  paint();
+
+  // Rotating tips during rest: an effort reward, a neuro insight, and the
+  // current lift's mind-muscle focus cue.
+  const tips = [{ k: "EFFORT", t: K.pickEncourage() }];
+  const n = K.pickNeuro(); tips.push({ k: n.tag.toUpperCase(), t: n.text });
+  const info = exName ? K.getInfo(exName) : null;
+  if (info) tips.push({ k: "FOCUS", t: info.focus });
+  let ti = 0;
+
+  bar.className = "show";
+  bar.innerHTML = `
+    <div class="rest-row">
+      <button class="rest-btn" data-r="-15">−15</button>
+      <div class="rest-mid"><b class="rest-secs">${remaining}s</b><span>REST</span></div>
+      <button class="rest-btn" data-r="skip">done</button>
+    </div>
+    <div class="rest-tip"></div>`;
+  const tipEl = bar.querySelector(".rest-tip");
+  const secsEl = bar.querySelector(".rest-secs");
+  const paintTip = () => { const tp = tips[ti % tips.length]; tipEl.innerHTML = `<b>${esc(tp.k)}</b> ${esc(tp.t)}`; };
+  paintTip();
+  restTipTimer = setInterval(() => { ti++; paintTip(); }, 5000);
+
   bar.onclick = (e) => {
     const r = e.target.closest("[data-r]"); if (!r) return;
-    if (r.dataset.r === "skip") { remaining = 0; }
+    if (r.dataset.r === "skip") remaining = 0;
     else remaining = Math.max(0, remaining + parseInt(r.dataset.r, 10));
-    if (remaining === 0) endRest(); else paint();
+    if (remaining <= 0) endRest(); else secsEl.textContent = remaining + "s";
   };
   restTimer = setInterval(() => {
     remaining -= 1;
-    if (remaining <= 0) { endRest(); if (navigator.vibrate) navigator.vibrate(200); }
-    else paint();
+    if (remaining <= 0) { endRest(); fx.haptic([120, 50, 120]); }
+    else if (secsEl) secsEl.textContent = remaining + "s";
   }, 1000);
 }
-function endRest() { clearInterval(restTimer); const bar = $("#restbar"); if (bar) bar.className = ""; }
+function endRest() { clearInterval(restTimer); clearInterval(restTipTimer); const bar = $("#restbar"); if (bar) bar.className = ""; }
 
 async function finishSession() {
   const cur = state.current;
@@ -653,26 +743,61 @@ async function finishSession() {
 
   const leveled = after.level > before.level;
   const xpGain = after.totalXP - before.totalXP;
-  showQuestComplete({ xpGain, prs, leveled, level: after.level, rank: after.rank, before });
+  showQuestComplete({ xpGain, prs, leveled, level: after.level, rank: after.rank, before, session: cur });
 }
 
-function showQuestComplete({ xpGain, prs, leveled, level, rank, before }) {
+function showQuestComplete({ xpGain, prs, leveled, level, rank, before, session }) {
+  // muscle recap for the "wired in today" section
+  const byMuscle = {};
+  let setCount = 0;
+  (session.entries || []).forEach((e) => {
+    let v = 0, did = false;
+    (e.sets || []).forEach((x) => { if (Number(x.reps) > 0) { v += store.setVolume(x); setCount++; did = true; } });
+    if (did) { const m = e.muscle || "Other"; byMuscle[m] = (byMuscle[m] || 0) + v; }
+  });
+  const muscles = Object.keys(byMuscle).sort((a, b) => byMuscle[b] - byMuscle[a]).slice(0, 6);
+  const vol = store.sessionVolume(session);
+  const neuro = K.pickNeuro();
+
   const prHtml = prs.length
-    ? `<div class="qc-prs"><div class="qc-section">⬡ NEW RECORDS</div>${prs.map((p) => `<div class="qc-pr"><span>${esc(p.name)}</span><b>${fmt(p.e1rm)} ${esc(state.settings.unit)}</b></div>`).join("")}</div>`
+    ? `<div class="qc-prs"><div class="qc-section">⬡ NEW RECORDS</div>${prs.map((p, i) => `<div class="qc-pr" style="animation-delay:${i * 90}ms"><span>${esc(p.name)}</span><b>${fmt(p.e1rm)} ${esc(state.settings.unit)}</b></div>`).join("")}</div>`
     : "";
   const lvlHtml = leveled
     ? `<div class="qc-levelup"><div class="qc-arise">⟡ LEVEL UP ⟡</div><div class="qc-lvl">Lv ${before.level} → <b>${level}</b></div><div class="qc-rank ${rank.cls}">${esc(rank.title)}</div></div>`
     : "";
+
   modal(`
     <div class="qc">
       <div class="qc-banner">QUEST COMPLETE</div>
       ${lvlHtml}
-      <div class="qc-xp">+${fmt(xpGain)} <span>XP</span></div>
+      <div class="qc-xp">+<span id="qcXp">0</span> <span class="qc-xp-u">XP</span></div>
+      <div class="qc-stats"><span>${setCount} set${setCount === 1 ? "" : "s"}</span><span>${fmt(vol)} volume</span></div>
       ${prHtml}
-      <button class="btn btn-primary block" data-action="close-modal" id="qcDone">Return to System</button>
+      ${muscles.length ? `<div class="qc-recap"><div class="qc-section">◆ WIRED IN TODAY</div><div class="qc-muscles">${muscles.map((m) => `<span>${esc(m)}</span>`).join("")}</div></div>` : ""}
+      <div class="qc-neuro"><b>${esc(neuro.tag)}</b> ${esc(neuro.text)}</div>
+      <div class="qc-reflect">
+        <div class="qc-section">HOW DID IT FEEL?</div>
+        <div class="qc-mood">
+          ${[["🔥", "Pumped"], ["💪", "Strong"], ["😮‍💨", "Tough"], ["😐", "Flat"]].map(([e, k]) => `<button class="mood-btn ${session.mood === k ? "on" : ""}" data-mood="${k}">${e}<small>${k}</small></button>`).join("")}
+        </div>
+      </div>
+      <button class="btn btn-primary block btn-lg" id="qcDone">Return to System</button>
     </div>`);
+
+  fx.countUp($("#qcXp"), xpGain, { dur: 1100 });
+  if (leveled) { fx.flash("rgba(168,85,247,.42)"); fx.celebrate({ count: 90 }); fx.haptic([120, 60, 120, 60, 180]); }
+  else { fx.celebrate({ count: 42, colors: tagColors(session.tag) }); fx.haptic(60); }
+
+  const m = $("#modal");
+  m.querySelectorAll(".mood-btn").forEach((btn) => btn.addEventListener("click", async () => {
+    m.querySelectorAll(".mood-btn").forEach((x) => x.classList.remove("on"));
+    btn.classList.add("on");
+    session.mood = btn.dataset.mood;
+    await store.saveSession(session);
+    await refreshSessions();
+    fx.haptic(20);
+  }));
   $("#qcDone").addEventListener("click", () => { closeModal(); navigate("home"); });
-  if (navigator.vibrate) navigator.vibrate(leveled ? [120, 60, 120] : 80);
 }
 
 async function discardSession() {
@@ -723,6 +848,14 @@ async function setUnit(u) {
 }
 
 async function saveSettings() { await store.setSetting("settings", state.settings); }
+
+async function setReduceMotion(on) {
+  state.settings.reduceMotion = !!on;
+  document.body.classList.toggle("reduce-motion", !!on);
+  await saveSettings();
+  toast(on ? "Reduced motion on" : "Full effects on", "ok");
+  render();
+}
 
 async function resetProgram() {
   if (!confirm("Reset program to the default PPL? Your logged history is kept.")) return;
