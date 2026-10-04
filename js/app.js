@@ -12,13 +12,14 @@ import * as fx from "./fx.js";
 import * as coach from "./coach.js";
 import * as ach from "./achievements.js";
 import { badgeSVG } from "./icons.js";
+import * as anim from "./anim.js";
 
 /* ------------------------------- state ----------------------------------- */
 const state = {
   view: "home",
   program: null,
   sessions: [],
-  settings: { unit: "kg", restSeconds: 120, lastStatsExercise: null, reduceMotion: false, sound: true, hunterName: "", barWeight: 20, onboarded: false, achievementsSeen: [], achievementsAt: {}, healthEnabled: false, healthShortcut: "Log to Health" },
+  settings: { unit: "kg", restSeconds: 120, lastStatsExercise: null, reduceMotion: false, sound: true, hunterName: "", barWeight: 20, onboarded: false, achievementsSeen: [], achievementsAt: {}, healthEnabled: false, healthShortcut: "Log to Health", lastBackupAt: null },
   current: null, // session being logged
   stats: null,
   openLearn: new Set(), // exIds with the "Learn" panel expanded
@@ -254,6 +255,9 @@ function renderHome() {
   const neuro = K.neuroOfDay(store.todayISO());
   const achAll = ach.evaluate(state.sessions, state.stats);
   const got = achAll.filter((a) => a.unlocked);
+  const lastBk = state.settings.lastBackupAt;
+  const daysBk = lastBk ? Math.floor((Date.now() - lastBk) / 86400000) : null;
+  const needBackup = completedSessions().length >= 2 && (lastBk == null || daysBk >= 7);
 
   return `
   ${hunterPanel()}
@@ -262,6 +266,11 @@ function renderHome() {
   <section class="panel resume-banner" data-action="resume" data-id="${inProgress.id}">
     <div><div class="resume-k">WORKOUT IN PROGRESS</div><div class="resume-v">${esc(inProgress.dayName)} · ${esc(inProgress.date)}</div></div>
     <button class="btn btn-ghost">Resume ▸</button>
+  </section>` : ""}
+
+  ${needBackup ? `<section class="panel backup-nudge" data-action="go-data">
+    <div><div class="bn-k">⚠ BACK UP YOUR DATA</div><div class="bn-v">${lastBk ? daysBk + " day" + (daysBk === 1 ? "" : "s") + " since last backup" : "You haven't backed up yet"} · tap to export</div></div>
+    <button class="btn btn-ghost btn-sm">Data ▸</button>
   </section>` : ""}
 
   <section class="panel quest system-frame ${tagCls}">
@@ -425,6 +434,7 @@ function exerciseCard(entry, ei) {
     </div>
     ${entry.note ? `<div class="ex-note">${esc(entry.note)}</div>` : ""}
     <div class="ex-learn ${open ? "open" : ""}">
+      ${open ? `<div class="ex-demo">${anim.animSVG(entry.name, fx.reducedMotion())}<span class="ex-demo-cap">form demo · ${esc(anim.patternName(entry.name))}</span></div>` : ""}
       <div class="learn-row"><span class="learn-k">WORKS</span><span>${esc(info.primary)}${info.secondary && info.secondary !== "—" ? ' · <em>' + esc(info.secondary) + "</em>" : ""}</span></div>
       <div class="learn-row"><span class="learn-k">CUES</span><ul class="learn-cues">${info.cues.map((c) => `<li>${esc(c)}</li>`).join("")}</ul></div>
       <div class="learn-row"><span class="learn-k">AVOID</span><span>${esc(info.mistake)}</span></div>
@@ -487,10 +497,10 @@ function renderStats() {
 
   const hasBW = done.some((s) => Number(s.bodyweight) > 0);
   const bw = latestBodyweight();
-  const bigLifts = ["Back Squat", "Barbell Bench Press", "Deadlift", "Overhead Press"];
+  const bigLifts = ["Back Squat", "Barbell Bench Press", "Deadlift", "Overhead Press", "Barbell Row", "Hip Thrust"];
   const standards = bw > 0 ? bigLifts.map((n) => {
     const best = state.stats.bestByExercise[n]?.e1rm; if (!best) return null;
-    const r = coach.strengthRatio(best, bw); return r ? { name: n, ...r } : null;
+    const s = coach.strengthStandard(n, best, bw); return s ? { exercise: n, best, ...s } : null;
   }).filter(Boolean) : [];
 
   const achList = ach.evaluate(state.sessions, state.stats);
@@ -537,8 +547,8 @@ function renderStats() {
 
   ${standards.length ? `<section class="panel">
     <div class="panel-h"><h3>Strength Standards</h3></div>
-    <ul class="std-list">${standards.map((s) => `<li><span class="std-name">${esc(s.name)}</span><span class="std-ratio">${s.ratio}× <small>BW</small></span><span class="std-tier tier-${s.tier.toLowerCase()}">${s.tier}</span></li>`).join("")}</ul>
-    <div class="chart-cap">Estimated 1RM ÷ bodyweight (${bw}${u})</div>
+    ${standards.map(stdLiftBlock).join("")}
+    <div class="chart-cap">Est. 1RM ÷ bodyweight (${bw}${u}) · approximate, bodyweight-relative reference</div>
   </section>` : ""}
 
   <section class="panel">
@@ -558,6 +568,21 @@ function achCard(a) {
       : prog ? `<div class="ach-prog"><i style="width:${a.progress.pct}%"></i></div><div class="ach-desc">${fmt(a.progress.cur)}/${fmt(a.progress.goal)}</div>`
       : `<div class="ach-desc">Locked</div>`}
   </button>`;
+}
+
+function stdLiftBlock(s) {
+  const u = esc(state.settings.unit);
+  const tcls = (t) => "tier-" + t.toLowerCase().replace(/[^a-z]/g, "");
+  const chips = s.tiers.map((t, i) => `<span class="std-seg ${tcls(t)} ${i === s.index ? "on" : ""}">${esc(t)}<small>${s.cutoffs[i]}×</small></span>`).join("");
+  const next = s.next
+    ? `Next: <b>${esc(s.next.name)}</b> at ${s.next.ratio}× = ${fmt(Math.round(s.next.ratio * s.bw))}${u}`
+    : `Top tier — ${s.ratio}× bodyweight 🔱`;
+  return `<div class="std-lift">
+    <div class="std-top"><span class="std-name">${esc(s.exercise)}</span>
+      <span class="std-you"><b>${s.ratio}×</b> BW · <span class="std-tiername ${s.index < 0 ? "" : tcls(s.tier)}">${esc(s.tier)}</span></span></div>
+    <div class="std-scale">${chips}</div>
+    <div class="std-next">${next}</div>
+  </div>`;
 }
 
 function openRankPath() {
@@ -774,6 +799,7 @@ function bindView() {
     const actions = {
       "go-home": () => navigate("home"),
       "go-stats": () => navigate("stats"),
+      "go-data": () => navigate("data"),
       "ach-detail": () => openAchievement(b.dataset.id),
       "rank-path": openRankPath,
       start: () => startSession(b.dataset.day),
@@ -1112,7 +1138,9 @@ async function doExport(kind) {
     else if (kind === "csv") res = await exportCSV(sessions, state.settings.unit);
     else res = await exportJSON(sessions, state.program, state.settings);
     if (res === "cancelled") return;
-    toast(res === "shared" ? "Shared ✓" : "Downloaded ✓", "ok");
+    state.settings.lastBackupAt = Date.now();
+    await saveSettings();
+    toast(res === "shared" ? "Shared ✓ (backup saved)" : "Downloaded ✓ (backup saved)", "ok");
   } catch (e) {
     toast("Export failed: " + e.message, "warn");
   }

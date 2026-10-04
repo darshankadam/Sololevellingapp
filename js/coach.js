@@ -99,7 +99,42 @@ export function warmupSets(workWeight, bar, unit) {
   return out;
 }
 
-/** e1RM as a multiple of bodyweight + a soft tier label. */
+/* --------------------------- strength standards -------------------------- */
+/* Bodyweight-ratio cut-offs per lift (approximate, general male 1RM refs).
+ * Six tiers; the last is open-ended so a 3x-bodyweight bench reads World-Class.
+ * Order matches TIER_NAMES. */
+export const TIER_NAMES = ["Beginner", "Novice", "Intermediate", "Advanced", "Elite", "World-Class"];
+export const STANDARDS = {
+  bench:     [0.50, 0.75, 1.25, 1.75, 2.00, 2.25],
+  squat:     [0.75, 1.25, 1.75, 2.25, 2.75, 3.00],
+  deadlift:  [1.00, 1.50, 2.00, 2.50, 3.00, 3.25],
+  ohp:       [0.35, 0.55, 0.80, 1.10, 1.40, 1.60],
+  row:       [0.50, 0.75, 1.00, 1.25, 1.50, 1.75],
+  hipthrust: [1.00, 1.75, 2.50, 3.00, 3.50, 4.00]
+};
+const STD_KEY = {
+  "Barbell Bench Press": "bench", "Back Squat": "squat", "Deadlift": "deadlift",
+  "Overhead Press": "ohp", "Barbell Row": "row", "Hip Thrust": "hipthrust"
+};
+
+export function standardKey(name) { return STD_KEY[name] || null; }
+
+/** Per-lift standard. returns { key, ratio, index, tier, cutoffs, tiers, next, bw } or null */
+export function strengthStandard(name, e1rm, bodyweight) {
+  const key = STD_KEY[name];
+  if (!key) return null;
+  const bw = Number(bodyweight) || 0;
+  if (bw <= 0 || !e1rm) return null;
+  const cutoffs = STANDARDS[key];
+  const ratio = e1rm / bw;
+  let index = -1;
+  for (let i = 0; i < cutoffs.length; i++) if (ratio >= cutoffs[i]) index = i;
+  const tier = index < 0 ? "Getting started" : TIER_NAMES[index];
+  const next = index < cutoffs.length - 1 ? { name: TIER_NAMES[index + 1], ratio: cutoffs[index + 1] } : null;
+  return { key, ratio: Math.round(ratio * 100) / 100, index, tier, cutoffs, tiers: TIER_NAMES, next, bw };
+}
+
+/** e1RM as a multiple of bodyweight + a soft generic tier (fallback). */
 export function strengthRatio(e1rm, bodyweight) {
   const bw = Number(bodyweight) || 0;
   if (bw <= 0 || !e1rm) return null;
