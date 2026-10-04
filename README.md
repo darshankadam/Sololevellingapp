@@ -13,6 +13,25 @@ climb, see progression charts, and export everything to Excel.
 - **Fully editable** program — change exercises, sets, reps and alternates in
   the app or in `js/program.js`.
 
+**Coaching built in**
+- **Progressive-overload suggestions** per lift (double progression: add weight
+  when you clear the top of the rep range, else beat your reps).
+- **Learn panel** on every exercise — muscles worked, form cues, the common
+  mistake, a mind-muscle focus cue, and why it matters.
+- **Plate calculator** and **warm-up ramp** generator, and **strength
+  standards** (your estimated 1RM as a bodyweight multiple).
+
+**Motivation & progress**
+- **Hunter levels & ranks** (E → MONARCH), XP, streaks, and **21 unlockable
+  Titles**.
+- **Neuroplasticity insights** surfaced on Home, during rest, and after a
+  workout — accurate, science-based, not fluff.
+- **Analytics:** estimated-1RM progression, volume per session, volume by
+  muscle, bodyweight trend, and a **training-calendar heatmap**.
+- **Cinematic "Quest Complete"** with level-ups, new records, muscle recap,
+  title unlocks, a mood reflection, animations and optional sound — all with a
+  **Reduced-motion / Sound** toggle in Settings.
+
 ---
 
 ## 1. Put it on your iPhone (one-time setup)
@@ -91,12 +110,17 @@ update (the service worker refreshes the cache).
 ```
 index.html              App shell + PWA meta
 manifest.webmanifest    Install metadata (name, icons, standalone)
-sw.js                   Service worker (offline cache)
-css/styles.css          Solo Leveling "System" theme
+sw.js                   Service worker (offline cache — bump CACHE on changes)
+css/styles.css          Solo Leveling "System" theme + animations
 js/program.js           ★ Your PPL program (edit this to change workouts)
 js/store.js             IndexedDB + XP/level/rank/PR engine
-js/charts.js            SVG progression charts
+js/coach.js             Progression, plate calc, warm-up, strength standards
+js/achievements.js      Title/achievement definitions + evaluation
+js/knowledge.js         Exercise coaching + neuroplasticity insight library
+js/charts.js            SVG charts (progression, volume, bodyweight, calendar)
+js/fx.js                Particle/sound/animation engine
 js/exporter.js          Excel / CSV / JSON export + import
+js/app.js               Controller: views, logging, onboarding, wiring
 vendor/xlsx.full.min.js SheetJS (bundled, for offline Excel export)
 icons/                  App icons
 ```
