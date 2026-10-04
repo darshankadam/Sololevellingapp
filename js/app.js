@@ -18,7 +18,7 @@ const state = {
   view: "home",
   program: null,
   sessions: [],
-  settings: { unit: "kg", restSeconds: 120, lastStatsExercise: null, reduceMotion: false, sound: true, hunterName: "", barWeight: 20, onboarded: false, achievementsSeen: [], achievementsAt: {} },
+  settings: { unit: "kg", restSeconds: 120, lastStatsExercise: null, reduceMotion: false, sound: true, hunterName: "", barWeight: 20, onboarded: false, achievementsSeen: [], achievementsAt: {}, healthEnabled: false, healthShortcut: "Log to Health" },
   current: null, // session being logged
   stats: null,
   openLearn: new Set(), // exIds with the "Learn" panel expanded
@@ -701,6 +701,31 @@ function renderData() {
   </section>
 
   <section class="panel">
+    <div class="panel-h"><h3>Apple Health</h3>
+      <div class="seg">
+        <button class="seg-btn ${state.settings.healthEnabled ? "on" : ""}" data-action="health-toggle" data-v="on">On</button>
+        <button class="seg-btn ${!state.settings.healthEnabled ? "on" : ""}" data-action="health-toggle" data-v="off">Off</button>
+      </div>
+    </div>
+    <p class="muted-p">Push your <b>bodyweight</b> (and estimated calories) to Apple Health through a free one-time Shortcut. Your detailed set log stays in the app — Health can't store per-set reps/weights.</p>
+    <label class="field"><span>Shortcut name (must match exactly)</span>
+      <input type="text" id="hShort" value="${esc(state.settings.healthShortcut || "Log to Health")}" data-role="hshort"></label>
+    <button class="btn btn-ghost block" data-action="health-test">⌁ Test — send latest bodyweight → Health</button>
+    <details class="prog-day health-help">
+      <summary>How to set up the Shortcut (~2 min)</summary>
+      <ol class="help-ol">
+        <li>Open the <b>Shortcuts</b> app → <b>+</b> (new) → name it exactly <b>${esc(state.settings.healthShortcut || "Log to Health")}</b>.</li>
+        <li>Add action <b>Get Dictionary from Input</b>.</li>
+        <li>Add <b>Get Dictionary Value</b>, Key = <b>weight</b>.</li>
+        <li>Add <b>Log Health Sample</b> → type <b>Body Mass</b> → value = that Dictionary Value.</li>
+        <li><i>(Optional)</i> Another <b>Get Dictionary Value</b> (Key = <b>kcal</b>) → <b>Log Health Sample</b> → <b>Active Energy</b>.</li>
+        <li>Make sure it <b>Receives</b> input (Shortcut Input). Save, then flip the toggle above to On.</li>
+      </ol>
+      <p class="muted-p">After this, finishing a workout shows a <b>Send to Apple Health</b> button.</p>
+    </details>
+  </section>
+
+  <section class="panel">
     <div class="panel-h"><h3>Program</h3><button class="btn btn-ghost btn-sm" data-action="reset-program">Reset to default</button></div>
     <p class="muted-p">Edit exercises, sets, reps and alternates. Changes apply to future sessions.</p>
     <div class="prog-edit">
@@ -774,6 +799,8 @@ function bindView() {
       "del-ex": () => delProgExercise(+b.dataset.day, +b.dataset.ex),
       "toggle-fx": () => setReduceMotion(b.dataset.v === "on"),
       sound: () => setSoundSetting(b.dataset.v === "on"),
+      "health-toggle": () => setHealthEnabled(b.dataset.v === "on"),
+      "health-test": healthTest,
       wipe: wipeData
     };
     if (actions[a]) { e.preventDefault(); actions[a](); }
@@ -791,6 +818,7 @@ function bindView() {
     else if (t.dataset.role === "rest-secs") { state.settings.restSeconds = Math.max(15, +t.value || 120); saveSettings(); }
     else if (t.dataset.role === "hname") { state.settings.hunterName = t.value; saveSettings(); }
     else if (t.dataset.role === "barw") { state.settings.barWeight = Math.max(0, parseFloat(t.value) || 0); saveSettings(); }
+    else if (t.dataset.role === "hshort") { state.settings.healthShortcut = t.value; saveSettings(); }
     else if (t.dataset.role === "pe") { editProgram(t); }
   };
 
@@ -1016,6 +1044,8 @@ function showQuestComplete({ xpGain, prs, leveled, level, rank, before, session,
   });
   const muscles = Object.keys(byMuscle).sort((a, b) => byMuscle[b] - byMuscle[a]).slice(0, 6);
   const vol = store.sessionVolume(session);
+  const durMin = (session.completedAt && session.startedAt) ? Math.max(1, Math.round((session.completedAt - session.startedAt) / 60000)) : 0;
+  const kcal = durMin > 0 ? durMin * 6 : setCount * 5;
   const neuro = K.pickNeuro();
   const achHtml = (newAch && newAch.length) ? `<div class="qc-ach"><div class="qc-section">⬡ TITLE${newAch.length > 1 ? "S" : ""} UNLOCKED</div>${newAch.map((a) => `<div class="qc-achrow"><span class="qc-achic">${badgeSVG(a.glyph, { tier: a.tier, unlocked: true, size: 46 })}</span><div class="qc-achtxt"><b>${esc(a.name)}</b><small>${esc(a.desc)}</small></div></div>`).join("")}</div>` : "";
 
@@ -1042,6 +1072,7 @@ function showQuestComplete({ xpGain, prs, leveled, level, rank, before, session,
           ${[["🔥", "Pumped"], ["💪", "Strong"], ["😮‍💨", "Tough"], ["😐", "Flat"]].map(([e, k]) => `<button class="mood-btn ${session.mood === k ? "on" : ""}" data-mood="${k}">${e}<small>${k}</small></button>`).join("")}
         </div>
       </div>
+      ${state.settings.healthEnabled ? `<button class="btn btn-ghost block" id="qcHealth">♥ Send to Apple Health</button>` : ""}
       <button class="btn btn-primary block btn-lg" id="qcDone">Return to System</button>
     </div>`);
 
@@ -1058,6 +1089,8 @@ function showQuestComplete({ xpGain, prs, leveled, level, rank, before, session,
     await refreshSessions();
     fx.haptic(20);
   }));
+  const hb = $("#qcHealth");
+  if (hb) hb.addEventListener("click", () => sendToHealth(session.bodyweight, kcal));
   $("#qcDone").addEventListener("click", () => { closeModal(); navigate("home"); });
 }
 
@@ -1125,6 +1158,29 @@ async function setSoundSetting(on) {
   await saveSettings();
   if (on) fx.chime("ding");
   render();
+}
+
+/* --------------------------- Apple Health bridge ------------------------- */
+async function setHealthEnabled(on) {
+  state.settings.healthEnabled = !!on;
+  await saveSettings();
+  toast(on ? "Apple Health sync on" : "Apple Health sync off", "ok");
+  render();
+}
+function sendToHealth(weight, kcal) {
+  const w = Number(weight) || 0;
+  const k = Number(kcal) || 0;
+  if (w <= 0 && k <= 0) { toast("Nothing to send — log a bodyweight first", "warn"); return; }
+  const name = (state.settings.healthShortcut || "Log to Health").trim();
+  const payload = JSON.stringify({ weight: w, kcal: k, unit: state.settings.unit, date: store.todayISO() });
+  const url = `shortcuts://run-shortcut?name=${encodeURIComponent(name)}&input=${encodeURIComponent(payload)}`;
+  toast("Opening Shortcuts…");
+  window.location.href = url;
+}
+function healthTest() {
+  const bw = latestBodyweight();
+  if (bw <= 0) { toast("Finish a workout with a bodyweight first", "warn"); return; }
+  sendToHealth(bw, 0);
 }
 
 /* --------------------------- onboarding (first run) ---------------------- */

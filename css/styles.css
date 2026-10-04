@@ -716,3 +716,10 @@ body.reduce-motion .panel { backdrop-filter: none; -webkit-backdrop-filter: none
 .rl-go small { display: block; font-size: 9px; color: var(--muted); letter-spacing: 1px; }
 .rp-next { margin-top: 14px; text-align: center; font-size: 13px; color: #d7dcff; background: rgba(139,92,246,.12); border: 1px solid color-mix(in srgb, var(--violet) 40%, var(--line)); border-radius: 10px; padding: 10px; }
 .rp-next b { color: var(--pr); }
+
+/* ---- Apple Health setup help ---- */
+.health-help { margin-top: 10px; }
+.help-ol { margin: 10px 12px; padding-left: 18px; color: #c7ccf2; font-size: 13px; line-height: 1.55; }
+.help-ol li { margin-bottom: 6px; }
+.help-ol b { color: #eaf0ff; }
+.health-help .muted-p { margin: 2px 12px 12px; }
