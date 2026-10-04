@@ -151,6 +151,35 @@ export function haptic(pattern) {
   } catch { /* ignore */ }
 }
 
+/* ------------------------------------------------------------- sound ----- */
+let actx = null;
+let soundOn = true;
+export function setSound(on) { soundOn = !!on; }
+function ac() {
+  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch { actx = null; } }
+  return actx;
+}
+/** Short synthesized chime (no audio files). kind: 'levelup' | 'pr' | 'ding'. */
+export function chime(kind = "ding") {
+  if (!soundOn) return;
+  const ctx = ac(); if (!ctx) return;
+  try { if (ctx.state === "suspended") ctx.resume(); } catch { /* ignore */ }
+  const now = ctx.currentTime;
+  const notes = kind === "levelup" ? [523.25, 659.25, 783.99, 1046.5]
+    : kind === "pr" ? [659.25, 987.77]
+    : [783.99];
+  notes.forEach((f, i) => {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = "triangle"; o.frequency.value = f;
+    const t = now + i * 0.11;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.16, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0008, t + 0.5);
+    o.connect(g).connect(ctx.destination);
+    o.start(t); o.stop(t + 0.55);
+  });
+}
+
 /** Quick full-screen tint flash (e.g. on level up). */
 export function flash(color = "rgba(139,92,246,.35)", ms = 500) {
   if (reducedMotion()) return;

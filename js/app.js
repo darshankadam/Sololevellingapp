@@ -5,20 +5,23 @@
 
 import { getDay } from "./program.js";
 import * as store from "./store.js";
-import { lineChart, barChart } from "./charts.js";
+import { lineChart, barChart, calendarHeatmap } from "./charts.js";
 import { exportXLSX, exportCSV, exportJSON, readJSONFile } from "./exporter.js";
 import * as K from "./knowledge.js";
 import * as fx from "./fx.js";
+import * as coach from "./coach.js";
+import * as ach from "./achievements.js";
 
 /* ------------------------------- state ----------------------------------- */
 const state = {
   view: "home",
   program: null,
   sessions: [],
-  settings: { unit: "kg", restSeconds: 120, lastStatsExercise: null, reduceMotion: false },
+  settings: { unit: "kg", restSeconds: 120, lastStatsExercise: null, reduceMotion: false, sound: true, hunterName: "", barWeight: 20, onboarded: false, achievementsSeen: [] },
   current: null, // session being logged
   stats: null,
-  openLearn: new Set() // exIds with the "Learn" panel expanded
+  openLearn: new Set(), // exIds with the "Learn" panel expanded
+  _pendingBW: null
 };
 
 let saveTimer = null;
@@ -106,6 +109,26 @@ function lastPerformance(exName) {
   return null;
 }
 
+/** Full most-recent completed entry (all sets) for a lift — for progression. */
+function lastSessionEntry(exName) {
+  const done = completedSessions();
+  for (let i = done.length - 1; i >= 0; i--) {
+    const entry = (done[i].entries || []).find((e) => e.name === exName && (e.sets || []).some((s) => Number(s.reps) > 0));
+    if (entry) return entry;
+  }
+  return null;
+}
+
+function latestBodyweight() {
+  const done = completedSessions();
+  for (let i = done.length - 1; i >= 0; i--) { const v = Number(done[i].bodyweight); if (v > 0) return v; }
+  return 0;
+}
+function defaultBodyweight() {
+  if (state._pendingBW) { const p = state._pendingBW; state._pendingBW = null; return String(p); }
+  const b = latestBodyweight(); return b > 0 ? String(b) : "";
+}
+
 function newSessionFromDay(dayId) {
   const day = getDay(state.program, dayId);
   const entries = day.exercises.map((ex) => {
@@ -121,7 +144,7 @@ function newSessionFromDay(dayId) {
   });
   return {
     id: store.uid(), date: store.todayISO(), dayId: day.id, dayName: day.name, tag: day.tag,
-    entries, note: "", bodyweight: "", startedAt: Date.now(), completedAt: null, createdAt: Date.now()
+    entries, note: "", bodyweight: defaultBodyweight(), startedAt: Date.now(), completedAt: null, createdAt: Date.now()
   };
 }
 
@@ -140,12 +163,24 @@ async function init() {
   state.program = await store.getProgram();
   state.settings = Object.assign(state.settings, (await store.getSetting("settings", {})) || {});
   document.body.classList.toggle("reduce-motion", !!state.settings.reduceMotion);
+  fx.setSound(state.settings.sound !== false);
   await refreshSessions();
+
+  // Existing users (already have logs) skip onboarding, and their already-earned
+  // titles are marked seen so we don't retroactively celebrate them.
+  if (!Array.isArray(state.settings.achievementsSeen)) state.settings.achievementsSeen = [];
+  if (!state.settings.onboarded && state.sessions.length > 0) state.settings.onboarded = true;
+  if (state.settings.achievementsSeen.length === 0 && state.sessions.length > 0) {
+    state.settings.achievementsSeen = ach.unlockedIds(state.sessions, state.stats);
+  }
+  await saveSettings();
+
   store.requestPersistence();
   registerSW();
   bindShell();
   state.animateNext = true;
   render();
+  if (!state.settings.onboarded) showOnboarding();
 }
 
 function bindShell() {
@@ -187,7 +222,7 @@ function hunterPanel() {
     <div class="hunter-top">
       <div class="rank-badge ${s.rank.cls}"><span>${esc(s.rank.letter)}</span></div>
       <div class="hunter-id">
-        <div class="hunter-label">HUNTER · ${esc(s.rank.title)}</div>
+        <div class="hunter-label">${esc(state.settings.hunterName || "HUNTER")} · ${esc(s.rank.title)}</div>
         <div class="hunter-level">LEVEL <b>${s.level}</b></div>
         <div class="xp-row">
           <div class="xp-bar"><i style="width:${pct}%" data-pct="${pct}"></i></div>
@@ -212,6 +247,8 @@ function renderHome() {
   const tagCls = "tag-" + (day.tag || "push").toLowerCase();
   const recent = completedSessions().slice(-5).reverse();
   const neuro = K.neuroOfDay(store.todayISO());
+  const achAll = ach.evaluate(state.sessions, state.stats);
+  const got = achAll.filter((a) => a.unlocked);
 
   return `
   ${hunterPanel()}
@@ -234,6 +271,11 @@ function renderHome() {
       <button class="btn btn-primary btn-lg" data-action="start" data-day="${day.id}">⟡ Enter the Gate</button>
       <button class="btn btn-ghost" data-action="pick-day">Change</button>
     </div>
+  </section>
+
+  <section class="panel ach-strip" data-action="go-stats">
+    <div class="ach-strip-h"><span>⬡ TITLES</span><b>${got.length}/${achAll.length}</b></div>
+    <div class="ach-icons">${got.length ? got.slice(-8).reverse().map((a) => `<span class="ach-ico">${a.icon}</span>`).join("") : '<span class="ach-none">Clear gates to earn titles →</span>'}</div>
   </section>
 
   <section class="panel neuro-card">
@@ -300,6 +342,7 @@ function exerciseCard(entry, ei) {
   const step = state.settings.unit === "lb" ? 5 : 2.5;
   const info = K.getInfo(entry.name, entry.muscle);
   const open = state.openLearn.has(entry.exId);
+  const sugg = coach.progressionSuggestion(lastSessionEntry(entry.name), entry.targetReps, state.settings.unit);
   return `
   <section class="panel ex-card">
     <div class="ex-head">
@@ -321,6 +364,13 @@ function exerciseCard(entry, ei) {
       <div class="learn-why">${esc(info.why)}</div>
     </div>
     <div class="ex-last">${last ? `Last: <b>${esc(last.weight)}${esc(state.settings.unit)} × ${esc(last.reps)}</b> · best e1RM ${fmt(store.e1rm(last.weight, last.reps))}` : "No history yet — set the baseline."}</div>
+    <div class="ex-coach">
+      <div class="coach-tip ${sugg.type === "add" ? "up" : ""}">${sugg.type === "add" ? "▲ " : "→ "}${esc(sugg.text)}</div>
+      <div class="coach-btns">
+        <button class="chip-btn" data-action="plates" data-ex="${ei}">⚖ Plates</button>
+        <button class="chip-btn" data-action="warmup" data-ex="${ei}">🔥 Warm-up</button>
+      </div>
+    </div>
     <div class="set-table">
       <div class="set-row set-row-head"><span>SET</span><span>WEIGHT (${esc(state.settings.unit)})</span><span>REPS</span><span>✓</span></div>
       ${entry.sets.map((set, si) => setRow(entry, ei, set, si, step)).join("")}
@@ -354,10 +404,9 @@ function setRow(entry, ei, set, si, step) {
 function renderStats() {
   const done = completedSessions();
   if (!done.length) {
-    return `${hunterPanel()}<section class="panel empty-hero"><h2>No data yet</h2><p>Clear a few gates and your progression charts awaken here.</p></section>`;
+    return `${hunterPanel()}<section class="panel empty-hero"><h2>No data yet</h2><p>Clear a few gates and your analytics awaken here.</p></section>`;
   }
 
-  // exercise list that actually has history
   const trained = {};
   done.forEach((s) => (s.entries || []).forEach((e) => (e.sets || []).forEach((x) => { if (Number(x.reps) > 0) trained[e.name] = (trained[e.name] || 0) + 1; })));
   const names = Object.keys(trained).sort((a, b) => trained[b] - trained[a]);
@@ -366,11 +415,32 @@ function renderStats() {
 
   const prRows = Object.entries(state.stats.bestByExercise)
     .map(([name, v]) => ({ name, e1rm: v.e1rm, date: v.date }))
-    .sort((a, b) => b.e1rm - a.e1rm)
-    .slice(0, 12);
+    .sort((a, b) => b.e1rm - a.e1rm).slice(0, 12);
+
+  const hasBW = done.some((s) => Number(s.bodyweight) > 0);
+  const bw = latestBodyweight();
+  const bigLifts = ["Back Squat", "Barbell Bench Press", "Deadlift", "Overhead Press"];
+  const standards = bw > 0 ? bigLifts.map((n) => {
+    const best = state.stats.bestByExercise[n]?.e1rm; if (!best) return null;
+    const r = coach.strengthRatio(best, bw); return r ? { name: n, ...r } : null;
+  }).filter(Boolean) : [];
+
+  const achList = ach.evaluate(state.sessions, state.stats);
+  const u = esc(state.settings.unit);
 
   return `
   ${hunterPanel()}
+
+  <section class="panel" id="achSection">
+    <div class="panel-h"><h3>⬡ Titles</h3><span class="muted-sm">${achList.filter((a) => a.unlocked).length}/${achList.length}</span></div>
+    <div class="ach-grid">${achList.map(achCard).join("")}</div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-h"><h3>Training Calendar</h3></div>
+    <div id="chartCal" class="chart"></div>
+    <div class="chart-cap">Each square is a day · brighter = more volume · last 18 weeks</div>
+  </section>
 
   <section class="panel">
     <div class="panel-h"><h3>Strength Progression</h3></div>
@@ -382,8 +452,14 @@ function renderStats() {
   <section class="panel">
     <div class="panel-h"><h3>Volume per Gate</h3></div>
     <div id="chartVol" class="chart"></div>
-    <div class="chart-cap">Total kg·reps per session (last 20)</div>
+    <div class="chart-cap">Total ${u}·reps per session (last 20)</div>
   </section>
+
+  ${hasBW ? `<section class="panel">
+    <div class="panel-h"><h3>Bodyweight</h3></div>
+    <div id="chartBW" class="chart"></div>
+    <div class="chart-cap">Logged at the end of a session</div>
+  </section>` : ""}
 
   <section class="panel">
     <div class="panel-h"><h3>Volume by Muscle</h3></div>
@@ -391,16 +467,39 @@ function renderStats() {
     <div class="chart-cap">Where your work is going (all time)</div>
   </section>
 
+  ${standards.length ? `<section class="panel">
+    <div class="panel-h"><h3>Strength Standards</h3></div>
+    <ul class="std-list">${standards.map((s) => `<li><span class="std-name">${esc(s.name)}</span><span class="std-ratio">${s.ratio}× <small>BW</small></span><span class="std-tier tier-${s.tier.toLowerCase()}">${s.tier}</span></li>`).join("")}</ul>
+    <div class="chart-cap">Estimated 1RM ÷ bodyweight (${bw}${u})</div>
+  </section>` : ""}
+
   <section class="panel">
     <div class="panel-h"><h3>⬡ Record Board</h3></div>
     <ul class="pr-list">
-      ${prRows.map((p) => `<li><span class="pr-name">${esc(p.name)}</span><span class="pr-val">${fmt(p.e1rm)} ${esc(state.settings.unit)}</span><small>${esc(p.date)}</small></li>`).join("")}
+      ${prRows.map((p) => `<li><span class="pr-name">${esc(p.name)}</span><span class="pr-val">${fmt(p.e1rm)} ${u}</span><small>${esc(p.date)}</small></li>`).join("")}
     </ul>
   </section>`;
 }
 
+function achCard(a) {
+  const prog = !a.unlocked && a.progress;
+  return `<div class="ach-card ${a.unlocked ? "got" : "locked"}" title="${esc(a.desc)}">
+    <div class="ach-ic">${a.icon}</div>
+    <div class="ach-name">${esc(a.name)}</div>
+    ${a.unlocked ? `<div class="ach-desc">${esc(a.desc)}</div>`
+      : prog ? `<div class="ach-prog"><i style="width:${a.progress.pct}%"></i></div><div class="ach-desc">${fmt(a.progress.cur)}/${fmt(a.progress.goal)}</div>`
+      : `<div class="ach-desc">${esc(a.desc)}</div>`}
+  </div>`;
+}
+
 function drawStatsCharts(selName) {
   const done = completedSessions();
+
+  // training calendar
+  const dayMap = {};
+  done.forEach((s) => { dayMap[s.date] = (dayMap[s.date] || 0) + store.sessionVolume(s); });
+  const cc = $("#chartCal");
+  if (cc) calendarHeatmap(cc, dayMap, { weeks: 18 });
 
   const hist = store.exerciseHistory(state.sessions, selName).map((h) => ({
     x: h.date, y: round(h.e1rm, 1), label: h.topSet ? `${h.topSet.weight}${state.settings.unit}×${h.topSet.reps}` : ""
@@ -411,6 +510,10 @@ function drawStatsCharts(selName) {
   const vol = done.slice(-20).map((s) => ({ x: s.date, y: round(store.sessionVolume(s)), label: s.dayName }));
   const cv = $("#chartVol");
   if (cv) lineChart(cv, vol, { yUnit: "", title: "Volume per session", highlightMax: false });
+
+  const bwSeries = done.filter((s) => Number(s.bodyweight) > 0).map((s) => ({ x: s.date, y: Number(s.bodyweight) }));
+  const cbw = $("#chartBW");
+  if (cbw) lineChart(cbw, bwSeries, { yUnit: " " + state.settings.unit, title: "Bodyweight", highlightMax: false });
 
   const byMuscle = {};
   done.forEach((s) => (s.entries || []).forEach((e) => {
@@ -449,6 +552,17 @@ function renderData() {
     </div>
     <label class="field"><span>Rest timer (seconds)</span>
       <input type="text" inputmode="numeric" id="restSecs" value="${esc(state.settings.restSeconds)}" data-role="rest-secs"></label>
+    <label class="field"><span>Hunter name</span>
+      <input type="text" id="hName" value="${esc(state.settings.hunterName || "")}" placeholder="HUNTER" data-role="hname"></label>
+    <label class="field"><span>Barbell weight (${u}) — for the plate calculator</span>
+      <input type="text" inputmode="decimal" id="barW" value="${esc(state.settings.barWeight)}" data-role="barw"></label>
+    <div class="row-between">
+      <span>Celebration sound</span>
+      <div class="seg">
+        <button class="seg-btn ${state.settings.sound !== false ? "on" : ""}" data-action="sound" data-v="on">On</button>
+        <button class="seg-btn ${state.settings.sound === false ? "on" : ""}" data-action="sound" data-v="off">Off</button>
+      </div>
+    </div>
     <div class="row-between">
       <span>Animations &amp; effects</span>
       <div class="seg">
@@ -506,6 +620,7 @@ function bindView() {
     const a = b.dataset.action;
     const actions = {
       "go-home": () => navigate("home"),
+      "go-stats": () => navigate("stats"),
       start: () => startSession(b.dataset.day),
       resume: () => resumeSession(b.dataset.id),
       "open-session": () => openSession(b.dataset.id),
@@ -513,6 +628,8 @@ function bindView() {
       step: () => stepField(+b.dataset.ex, +b.dataset.set, b.dataset.field, +b.dataset.delta),
       "toggle-done": () => toggleDone(+b.dataset.ex, +b.dataset.set, b),
       learn: () => toggleLearn(+b.dataset.ex),
+      plates: () => openPlates(+b.dataset.ex),
+      warmup: () => openWarmup(+b.dataset.ex),
       "add-set": () => addSet(+b.dataset.ex),
       "del-set": () => delSet(+b.dataset.ex),
       swap: () => swapExercise(+b.dataset.ex),
@@ -526,6 +643,7 @@ function bindView() {
       "add-ex": () => addProgExercise(+b.dataset.day),
       "del-ex": () => delProgExercise(+b.dataset.day, +b.dataset.ex),
       "toggle-fx": () => setReduceMotion(b.dataset.v === "on"),
+      sound: () => setSoundSetting(b.dataset.v === "on"),
       wipe: wipeData
     };
     if (actions[a]) { e.preventDefault(); actions[a](); }
@@ -541,6 +659,8 @@ function bindView() {
     } else if (t.dataset.role === "sess-note") { state.current.note = t.value; persistCurrent(); }
     else if (t.dataset.role === "bw") { state.current.bodyweight = t.value; persistCurrent(); }
     else if (t.dataset.role === "rest-secs") { state.settings.restSeconds = Math.max(15, +t.value || 120); saveSettings(); }
+    else if (t.dataset.role === "hname") { state.settings.hunterName = t.value; saveSettings(); }
+    else if (t.dataset.role === "barw") { state.settings.barWeight = Math.max(0, parseFloat(t.value) || 0); saveSettings(); }
     else if (t.dataset.role === "pe") { editProgram(t); }
   };
 
@@ -728,14 +848,21 @@ async function finishSession() {
 
   // PRs earned this session
   const prs = [];
-  const seen = new Set();
+  const seenNames = new Set();
   for (const entry of cur.entries) {
-    if (seen.has(entry.name)) continue;
+    if (seenNames.has(entry.name)) continue;
     const est = store.sessionBestE1RM(cur, entry.name);
     if (est <= 0) continue;
     const prev = before.bestByExercise[entry.name]?.e1rm || 0;
-    if (est > prev + 0.01) { prs.push({ name: entry.name, e1rm: est }); seen.add(entry.name); }
+    if (est > prev + 0.01) { prs.push({ name: entry.name, e1rm: est }); seenNames.add(entry.name); }
   }
+
+  // newly unlocked titles
+  const nowIds = ach.unlockedIds(others.concat(cur), after);
+  const seenAch = new Set(state.settings.achievementsSeen || []);
+  const newAch = ach.ACHIEVEMENTS.filter((a) => nowIds.includes(a.id) && !seenAch.has(a.id));
+  state.settings.achievementsSeen = nowIds;
+  await saveSettings();
 
   endRest();
   await refreshSessions();
@@ -743,10 +870,10 @@ async function finishSession() {
 
   const leveled = after.level > before.level;
   const xpGain = after.totalXP - before.totalXP;
-  showQuestComplete({ xpGain, prs, leveled, level: after.level, rank: after.rank, before, session: cur });
+  showQuestComplete({ xpGain, prs, leveled, level: after.level, rank: after.rank, before, session: cur, newAch });
 }
 
-function showQuestComplete({ xpGain, prs, leveled, level, rank, before, session }) {
+function showQuestComplete({ xpGain, prs, leveled, level, rank, before, session, newAch }) {
   // muscle recap for the "wired in today" section
   const byMuscle = {};
   let setCount = 0;
@@ -758,6 +885,7 @@ function showQuestComplete({ xpGain, prs, leveled, level, rank, before, session 
   const muscles = Object.keys(byMuscle).sort((a, b) => byMuscle[b] - byMuscle[a]).slice(0, 6);
   const vol = store.sessionVolume(session);
   const neuro = K.pickNeuro();
+  const achHtml = (newAch && newAch.length) ? `<div class="qc-ach"><div class="qc-section">⬡ TITLE${newAch.length > 1 ? "S" : ""} UNLOCKED</div>${newAch.map((a) => `<div class="qc-achrow"><span class="qc-achic">${a.icon}</span><div class="qc-achtxt"><b>${esc(a.name)}</b><small>${esc(a.desc)}</small></div></div>`).join("")}</div>` : "";
 
   const prHtml = prs.length
     ? `<div class="qc-prs"><div class="qc-section">⬡ NEW RECORDS</div>${prs.map((p, i) => `<div class="qc-pr" style="animation-delay:${i * 90}ms"><span>${esc(p.name)}</span><b>${fmt(p.e1rm)} ${esc(state.settings.unit)}</b></div>`).join("")}</div>`
@@ -774,6 +902,7 @@ function showQuestComplete({ xpGain, prs, leveled, level, rank, before, session 
       <div class="qc-stats"><span>${setCount} set${setCount === 1 ? "" : "s"}</span><span>${fmt(vol)} volume</span></div>
       ${prHtml}
       ${muscles.length ? `<div class="qc-recap"><div class="qc-section">◆ WIRED IN TODAY</div><div class="qc-muscles">${muscles.map((m) => `<span>${esc(m)}</span>`).join("")}</div></div>` : ""}
+      ${achHtml}
       <div class="qc-neuro"><b>${esc(neuro.tag)}</b> ${esc(neuro.text)}</div>
       <div class="qc-reflect">
         <div class="qc-section">HOW DID IT FEEL?</div>
@@ -785,8 +914,8 @@ function showQuestComplete({ xpGain, prs, leveled, level, rank, before, session 
     </div>`);
 
   fx.countUp($("#qcXp"), xpGain, { dur: 1100 });
-  if (leveled) { fx.flash("rgba(168,85,247,.42)"); fx.celebrate({ count: 90 }); fx.haptic([120, 60, 120, 60, 180]); }
-  else { fx.celebrate({ count: 42, colors: tagColors(session.tag) }); fx.haptic(60); }
+  if (leveled) { fx.flash("rgba(168,85,247,.42)"); fx.celebrate({ count: 90 }); fx.haptic([120, 60, 120, 60, 180]); fx.chime("levelup"); }
+  else { fx.celebrate({ count: 42, colors: tagColors(session.tag) }); fx.haptic(60); if (prs.length || (newAch && newAch.length)) fx.chime("pr"); }
 
   const m = $("#modal");
   m.querySelectorAll(".mood-btn").forEach((btn) => btn.addEventListener("click", async () => {
@@ -842,6 +971,7 @@ async function importBackup(file) {
 async function setUnit(u) {
   if (u === state.settings.unit) return;
   state.settings.unit = u;
+  state.settings.barWeight = u === "lb" ? 45 : 20;
   await saveSettings();
   toast("Units set to " + u + " (existing numbers keep their value)");
   render();
@@ -855,6 +985,83 @@ async function setReduceMotion(on) {
   await saveSettings();
   toast(on ? "Reduced motion on" : "Full effects on", "ok");
   render();
+}
+
+async function setSoundSetting(on) {
+  state.settings.sound = !!on;
+  fx.setSound(!!on);
+  await saveSettings();
+  if (on) fx.chime("ding");
+  render();
+}
+
+/* --------------------------- onboarding (first run) ---------------------- */
+function showOnboarding() {
+  const m = modal(`
+    <div class="onb">
+      <div class="qc-banner">⟡ AWAKENING ⟡</div>
+      <p class="onb-lead">Welcome, Hunter. The System tracks every rep, teaches you the lifts, and levels you up as you train. Everything stays on this device — no account, no cloud.</p>
+      <label class="field"><span>Your hunter name</span><input id="onbName" placeholder="HUNTER" value="${esc(state.settings.hunterName || "")}"></label>
+      <div class="row-between"><span>Units</span><div class="seg">
+        <button class="seg-btn on" id="onbKg">kg</button><button class="seg-btn" id="onbLb">lb</button></div></div>
+      <label class="field"><span>Bodyweight (optional)</span><input id="onbBW" inputmode="decimal" placeholder="e.g. 78"></label>
+      <button class="btn btn-primary btn-lg block" id="onbGo">Enter the System</button>
+    </div>`);
+  let unit = "kg";
+  const kg = m.querySelector("#onbKg"), lb = m.querySelector("#onbLb");
+  kg.onclick = () => { unit = "kg"; kg.classList.add("on"); lb.classList.remove("on"); };
+  lb.onclick = () => { unit = "lb"; lb.classList.add("on"); kg.classList.remove("on"); };
+  m.querySelector("#onbGo").onclick = async () => {
+    state.settings.hunterName = m.querySelector("#onbName").value.trim();
+    state.settings.unit = unit;
+    state.settings.barWeight = unit === "lb" ? 45 : 20;
+    const bw = m.querySelector("#onbBW").value.trim();
+    state._pendingBW = bw ? parseFloat(bw) : null;
+    state.settings.onboarded = true;
+    await saveSettings();
+    closeModal();
+    fx.chime("levelup");
+    render();
+  };
+}
+
+/* ---------------------- plate & warm-up calculators ---------------------- */
+function barFor(unit) { return Number(state.settings.barWeight) || (unit === "lb" ? 45 : 20); }
+
+function openPlates(ei) {
+  const entry = state.current.entries[ei];
+  const unit = state.settings.unit;
+  const bar = barFor(unit);
+  const plates = unit === "lb" ? coach.PLATES_LB : coach.PLATES_KG;
+  const firstW = (entry.sets.find((s) => Number(s.weight) > 0) || entry.sets[0] || {}).weight || "";
+  const m = modal(`<div class="modal-h"><h3>⚖ Plate Calculator</h3><button class="x" data-action="close-modal">✕</button></div>
+    <label class="field"><span>Target weight (${esc(unit)}) · bar ${bar}${esc(unit)}</span>
+      <input id="plW" inputmode="decimal" value="${esc(firstW)}" placeholder="e.g. 100"></label>
+    <div id="plOut" class="plate-out"></div>`);
+  const out = m.querySelector("#plOut");
+  const inp = m.querySelector("#plW");
+  const paint = () => { out.innerHTML = platesHTML(coach.platesPerSide(parseFloat(inp.value) || 0, bar, plates), unit, bar); };
+  inp.addEventListener("input", paint);
+  paint();
+}
+
+function platesHTML(res, unit, bar) {
+  if (res.under) return `<div class="plate-note">That's below the empty bar (${bar}${esc(unit)}).</div>`;
+  if (!res.items.length) return `<div class="plate-note">Just the empty bar — ${bar}${esc(unit)}.</div>`;
+  const chips = res.items.map((it) => `<span class="plate-chip"><b>${it.count}</b> × ${it.plate}</span>`).join("");
+  return `<div class="plate-side">Load per side:</div><div class="plate-chips">${chips}</div>${res.ok ? "" : `<div class="plate-note">+${res.leftover}${esc(unit)} can't be matched with standard plates.</div>`}`;
+}
+
+function openWarmup(ei) {
+  const entry = state.current.entries[ei];
+  const unit = state.settings.unit;
+  const bar = barFor(unit);
+  const work = Number((entry.sets.find((s) => Number(s.weight) > 0) || entry.sets[0] || {}).weight || 0);
+  const sets = coach.warmupSets(work, bar, unit);
+  const body = work <= 0 ? `<div class="plate-note">Enter your working weight first, then tap Warm-up.</div>`
+    : sets.length ? `<div class="warm-list">${sets.map((s, i) => `<div class="warm-row"><span>Warm-up ${i + 1}</span><b>${s.weight}${esc(unit)} × ${s.reps}</b><small>${s.pct}%</small></div>`).join("")}</div><div class="plate-note">Then your working sets at <b>${work}${esc(unit)}</b>. Keep warm-ups easy — they prime the nervous system, not fatigue it.</div>`
+    : `<div class="plate-note">Light enough to start without a ramp — a set or two at the working weight is plenty.</div>`;
+  modal(`<div class="modal-h"><h3>🔥 Warm-up · ${esc(entry.name)}</h3><button class="x" data-action="close-modal">✕</button></div>${body}`);
 }
 
 async function resetProgram() {

@@ -218,3 +218,55 @@ export function barChart(container, bars, opts = {}) {
     rect.addEventListener("pointerleave", () => (tip.style.opacity = "0"));
   });
 }
+
+/* --------------------------------------------------- calendar heatmap ----- */
+/**
+ * dataMap: { 'YYYY-MM-DD': value }  — a GitHub-style training calendar.
+ * Sequential single hue (accent), light->dark by intensity. Hover tooltip.
+ */
+export function calendarHeatmap(container, dataMap, opts = {}) {
+  container.classList.add("chart-wrap");
+  container.innerHTML = "";
+  const weeks = opts.weeks || 18;
+  const cell = 14, gap = 3, topPad = 16, leftPad = 2;
+  const W = leftPad + weeks * (cell + gap);
+  const H = topPad + 7 * (cell + gap);
+  const accent = cssVar("--accent", "#38bdf8");
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const dow = (today.getDay() + 6) % 7; // 0 = Monday
+  const start = new Date(today); start.setDate(start.getDate() - dow - (weeks - 1) * 7);
+  const iso = (d) => { const off = d.getTimezoneOffset(); return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10); };
+
+  let max = 0;
+  for (const k in dataMap) max = Math.max(max, dataMap[k]);
+
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", "aria-label": "training calendar" }, container);
+  const tip = makeTooltip(container);
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const colors = ["rgba(130,140,230,.08)", "rgba(56,189,248,.28)", "rgba(56,189,248,.5)", "rgba(56,189,248,.76)", accent];
+  let lastMonth = -1;
+
+  for (let w = 0; w < weeks; w++) {
+    for (let r = 0; r < 7; r++) {
+      const d = new Date(start); d.setDate(start.getDate() + w * 7 + r);
+      if (d > today) continue;
+      const key = iso(d);
+      const val = dataMap[key] || 0;
+      const q = max > 0 ? val / max : 0;
+      const bucket = val <= 0 ? 0 : q < 0.25 ? 1 : q < 0.5 ? 2 : q < 0.75 ? 3 : 4;
+      const x = leftPad + w * (cell + gap), y = topPad + r * (cell + gap);
+      const rect = el("rect", { x, y, width: cell, height: cell, rx: 3, fill: colors[bucket] }, svg);
+      if (bucket === 4) rect.setAttribute("filter", `drop-shadow(0 0 3px ${accent})`);
+      if (r === 0) { const m = d.getMonth(); if (m !== lastMonth) { lastMonth = m; const t = el("text", { x, y: 11, class: "chart-axis" }, svg); t.textContent = months[m]; } }
+      rect.addEventListener("pointerenter", (ev) => {
+        const cr = container.getBoundingClientRect();
+        tip.style.opacity = "1";
+        tip.innerHTML = `<b>${val > 0 ? fmt(val) + " vol" : "rest"}</b><span>${key}</span>`;
+        tip.style.left = Math.min(cr.width - 100, Math.max(2, ev.clientX - cr.left - 40)) + "px";
+        tip.style.top = (ev.clientY - cr.top - 44) + "px";
+      });
+      rect.addEventListener("pointerleave", () => (tip.style.opacity = "0"));
+    }
+  }
+}
