@@ -638,3 +638,7 @@ body.reduce-motion .panel { backdrop-filter: none; -webkit-backdrop-filter: none
 @media (max-width: 360px) {
   .ach-grid { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* ---- Log (history) header ---- */
+.log-top .quest-title { margin-top: 2px; }
+.log-top-stats { font-size: 13px; color: var(--muted); margin: 2px 0 14px; }

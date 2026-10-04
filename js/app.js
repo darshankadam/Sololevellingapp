@@ -204,10 +204,12 @@ function navigate(view) {
 
 /* =============================== RENDER ================================= */
 function render() {
-  $$("#nav [data-nav]").forEach((b) => b.classList.toggle("active", b.dataset.nav === state.view));
+  // the active-logging "session" view lights up the Log tab
+  $$("#nav [data-nav]").forEach((b) => b.classList.toggle("active", b.dataset.nav === state.view || (state.view === "session" && b.dataset.nav === "log")));
   const view = $("#view");
   if (state.view === "home") view.innerHTML = renderHome();
   else if (state.view === "log") view.innerHTML = renderLog();
+  else if (state.view === "session") view.innerHTML = renderSession();
   else if (state.view === "stats") view.innerHTML = renderStats();
   else if (state.view === "data") view.innerHTML = renderData();
   bindView();
@@ -296,16 +298,53 @@ function sessionRow(s) {
   const tagCls = "tag-" + (s.tag || "push").toLowerCase();
   return `<li class="session-item" data-action="open-session" data-id="${s.id}">
     <span class="si-tag ${tagCls}">${esc((s.tag || "")[0] || "·")}</span>
-    <span class="si-main"><b>${esc(s.dayName)}</b><small>${esc(s.date)}</small></span>
+    <span class="si-main"><b>${esc(s.dayName)}</b><small>${esc(s.date)}${s.mood ? " · " + moodEmoji(s.mood) : ""}</small></span>
     <span class="si-meta">${sets} sets<small>${fmt(store.sessionVolume(s))} vol</small></span>
   </li>`;
 }
 
-/* --------------------------------- LOG ----------------------------------- */
+/* ------------------------------ LOG (history) ---------------------------- */
 function renderLog() {
+  const inProgress = state.sessions.find((s) => !s.completedAt && (s.entries || []).some((e) => (e.sets || []).some((x) => x.done || Number(x.reps) > 0)));
+  const done = completedSessions().slice().reverse(); // newest first
+  const dayId = suggestedDayId();
+  const day = getDay(state.program, dayId);
+
+  // group sessions by "Month YYYY"
+  const groups = {};
+  for (const s of done) { const k = monthLabel(s.date); (groups[k] = groups[k] || []).push(s); }
+
+  return `
+  <section class="panel log-top system-frame">
+    <div class="quest-eyebrow">TRAINING LOG</div>
+    <h2 class="quest-title">Your Gates</h2>
+    <div class="log-top-stats">${done.length} logged · ${fmt(state.stats.totalVolume)} total volume · streak ${state.stats.streak}</div>
+    ${inProgress
+      ? `<button class="btn btn-primary btn-lg block" data-action="resume" data-id="${inProgress.id}">▸ Resume ${esc(inProgress.dayName)}</button>`
+      : `<button class="btn btn-primary btn-lg block" data-action="start" data-day="${day.id}">⟡ Start ${esc(day.name)}</button>`}
+  </section>
+
+  ${done.length
+    ? Object.keys(groups).map((k) => `
+      <section class="panel">
+        <div class="panel-h"><h3>${esc(k)}</h3><span class="muted-sm">${groups[k].length}</span></div>
+        <ul class="session-list">${groups[k].map(sessionRow).join("")}</ul>
+      </section>`).join("")
+    : `<section class="panel empty-hero"><h2>No workouts logged yet</h2><p>Tap Start above to log your first gate. Every set you record is saved here forever (on this device).</p></section>`}`;
+}
+
+function monthLabel(iso) {
+  const [y, m] = iso.split("-");
+  const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  return `${months[+m - 1]} ${y}`;
+}
+function moodEmoji(k) { return { Pumped: "🔥", Strong: "💪", Tough: "😮‍💨", Flat: "😐" }[k] || ""; }
+
+/* ------------------------- SESSION (active logging) ---------------------- */
+function renderSession() {
   const cur = state.current;
   if (!cur) {
-    return `<section class="panel empty-hero"><h2>No active quest</h2><p>Start one from the System tab.</p>
+    return `<section class="panel empty-hero"><h2>No active quest</h2><p>Start one from the System or Log tab.</p>
       <button class="btn btn-primary" data-action="go-home">◂ Back to System</button></section>`;
   }
   const tagCls = "tag-" + (cur.tag || "push").toLowerCase();
@@ -697,10 +736,10 @@ function animateIn() {
 async function startSession(dayId) {
   state.current = newSessionFromDay(dayId);
   await store.saveSession(state.current);
-  navigate("log");
+  navigate("session");
 }
-async function resumeSession(id) { state.current = await store.getSession(id); navigate("log"); }
-async function openSession(id) { state.current = await store.getSession(id); navigate("log"); toast("Editing past session"); }
+async function resumeSession(id) { state.current = await store.getSession(id); navigate("session"); }
+async function openSession(id) { state.current = await store.getSession(id); navigate("session"); toast("Editing past session"); }
 
 function pickDay() {
   const items = state.program.days.map((d) => `<button class="pick-item tag-${(d.tag || "").toLowerCase()}" data-action="start" data-day="${d.id}">
