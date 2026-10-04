@@ -267,6 +267,17 @@ export function rankForLevel(level) {
   return { letter: "E", title: "E-Rank Hunter", cls: "rank-e" };
 }
 
+/* The full rank ladder (min level to reach each). Mirrors rankForLevel. */
+export const RANK_TIERS = [
+  { letter: "E", title: "E-Rank Hunter", cls: "rank-e", min: 1, blurb: "Every Monarch started here." },
+  { letter: "D", title: "D-Rank Hunter", cls: "rank-d", min: 5, blurb: "The habit is forming." },
+  { letter: "C", title: "C-Rank Hunter", cls: "rank-c", min: 10, blurb: "Consistency is real now." },
+  { letter: "B", title: "B-Rank Hunter", cls: "rank-b", min: 20, blurb: "Serious, dependable strength." },
+  { letter: "A", title: "A-Rank Hunter", cls: "rank-a", min: 35, blurb: "Rarefied air. Few reach here." },
+  { letter: "S", title: "S-Rank Hunter", cls: "rank-s", min: 55, blurb: "Elite. The top of the ladder." },
+  { letter: "MONARCH", title: "Monarch", cls: "rank-monarch", min: 80, blurb: "Beyond rank. Arise." }
+];
+
 /* Streak tolerant of rest days: consecutive completed sessions where each is
  * within 3 days of the previous. Broken if the latest is >3 days ago. */
 function computeStreak(completedAsc) {

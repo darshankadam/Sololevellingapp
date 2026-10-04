@@ -224,7 +224,7 @@ function hunterPanel() {
   return `
   <section class="panel system-frame hunter">
     <div class="hunter-top">
-      <div class="rank-badge ${s.rank.cls}"><span>${esc(s.rank.letter)}</span></div>
+      <button class="rank-badge ${s.rank.cls}" data-action="rank-path" aria-label="View the rank path"><span>${esc(s.rank.letter.length > 2 ? s.rank.letter[0] : s.rank.letter)}</span></button>
       <div class="hunter-id">
         <div class="hunter-label">${esc(state.settings.hunterName || "HUNTER")} · ${esc(s.rank.title)}</div>
         <div class="hunter-level">LEVEL <b>${s.level}</b></div>
@@ -240,6 +240,7 @@ function hunterPanel() {
       <div class="stat-tile"><div class="stat-num">${fmt(s.totalVolume)}</div><div class="stat-cap">Total Volume</div></div>
       <div class="stat-tile"><div class="stat-num">${s.prTimeline.length}</div><div class="stat-cap">Records</div></div>
     </div>
+    <button class="path-btn" data-action="rank-path">⬢ Path of the Hunter — all ranks ▸</button>
   </section>`;
 }
 
@@ -559,6 +560,45 @@ function achCard(a) {
   </button>`;
 }
 
+function openRankPath() {
+  const s = state.stats;
+  const xp = s.totalXP;
+  const level = s.level;
+  const tiers = store.RANK_TIERS;
+  const upperOf = (t) => { const i = tiers.indexOf(t); return i < tiers.length - 1 ? tiers[i + 1].min - 1 : null; };
+  const nextTier = tiers.find((t) => t.min > level) || null;
+
+  const rows = tiers.slice().reverse().map((t) => {
+    const achieved = level >= t.min;
+    const current = s.rank.letter === t.letter;
+    const reachXp = store.xpForLevel(t.min);
+    const cls = current ? "current" : achieved ? "done" : "locked";
+    const upper = upperOf(t);
+    const range = upper ? `Level ${t.min}–${upper}` : `Level ${t.min}+`;
+    return `<div class="rl-row ${cls}">
+      <div class="rank-badge rl-badge ${t.cls}"><span>${esc(t.letter.length > 2 ? t.letter[0] : t.letter)}</span></div>
+      <div class="rl-main">
+        <div class="rl-title">${esc(t.title)}${current ? ' <em>· you are here</em>' : achieved ? " ✓" : ""}</div>
+        <div class="rl-meta">${range} · ${fmt(reachXp)} XP</div>
+        <div class="rl-blurb">${esc(t.blurb)}</div>
+      </div>
+      ${!achieved ? `<span class="rl-go">${fmt(reachXp - xp)}<small>XP</small></span>` : ""}
+    </div>`;
+  }).join("");
+
+  modal(`<div class="modal-h"><h3>Path of the Hunter</h3><button class="x" data-action="close-modal">✕</button></div>
+    <div class="rank-path">
+      <div class="rp-now">
+        <div class="rp-now-lvl">LEVEL <b>${level}</b> · ${esc(s.rank.title)}</div>
+        <div class="rp-now-xp">${fmt(xp)} XP total${level < 80 ? ` · ${fmt(store.xpForLevel(level + 1) - xp)} XP to Lv ${level + 1}` : ""}</div>
+      </div>
+      <div class="rank-ladder">${rows}</div>
+      ${nextTier
+        ? `<div class="rp-next">▲ Next rank: <b>${esc(nextTier.title)}</b> at Lv ${nextTier.min} — ${fmt(store.xpForLevel(nextTier.min) - xp)} XP away</div>`
+        : `<div class="rp-next">You've reached the summit. Arise. 👑</div>`}
+    </div>`);
+}
+
 function openAchievement(id) {
   const a = ach.evaluate(state.sessions, state.stats).find((x) => x.id === id);
   if (!a) return;
@@ -710,6 +750,7 @@ function bindView() {
       "go-home": () => navigate("home"),
       "go-stats": () => navigate("stats"),
       "ach-detail": () => openAchievement(b.dataset.id),
+      "rank-path": openRankPath,
       start: () => startSession(b.dataset.day),
       resume: () => resumeSession(b.dataset.id),
       "open-session": () => openSession(b.dataset.id),
