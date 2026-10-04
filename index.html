@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Solo Leveling Gym — The System</title>
+  <meta name="description" content="A local, offline PPL workout tracker with Solo Leveling style progression. All data stays on your device.">
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#05080f">
+
+  <!-- iOS add-to-home-screen -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="The System">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+
+  <!-- Fonts (fall back to system fonts offline) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body data-palette="#38bdf8,#a78bfa,#2dd4bf">
+
+  <div id="app">
+    <header class="appbar">
+      <svg class="logo-mark" viewBox="0 0 48 48" aria-hidden="true">
+        <path d="M24 3 42 13.5v21L24 45 6 34.5v-21z" fill="none" stroke="#38bdf8" stroke-width="2"/>
+        <rect x="14" y="22" width="20" height="4" rx="2" fill="#38bdf8"/>
+        <rect x="10" y="18" width="4" height="12" rx="2" fill="#7dd3fc"/>
+        <rect x="34" y="18" width="4" height="12" rx="2" fill="#7dd3fc"/>
+      </svg>
+      <h1>THE <b>SYSTEM</b></h1>
+      <span class="sub" id="appDate"></span>
+    </header>
+
+    <main id="view"><!-- views render here --></main>
+  </div>
+
+  <nav id="nav">
+    <button data-nav="home"><span class="ic">⬡</span>System</button>
+    <button data-nav="log"><span class="ic">⚔</span>Log</button>
+    <button data-nav="stats"><span class="ic">📈</span>Stats</button>
+    <button data-nav="data"><span class="ic">⬢</span>Data</button>
+  </nav>
+
+  <!-- Spreadsheet engine (vendored, offline) -->
+  <script defer src="vendor/xlsx.full.min.js"></script>
+  <!-- App -->
+  <script type="module" src="js/app.js"></script>
+  <script>
+    // small header date; harmless if module loads later
+    (function () {
+      var d = new Date();
+      var el = document.getElementById('appDate');
+      if (el) el.textContent = d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }).toUpperCase();
+    })();
+  </script>
+</body>
+</html>
